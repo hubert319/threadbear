@@ -25,6 +25,7 @@ export const THREAD_REQUESTS: Record<string, Row> = {
   'threads.heldBody': { what: "Opening a tool's output", relay: 'yes', phone: { via: 'eventBody' } },
   'threads.send': { what: 'Sending a message, pictures too', relay: 'yes', phone: { via: 'send' } },
   'threads.interrupt': { what: 'Stop', relay: 'yes', phone: { via: 'interrupt' } },
+  // Not its mode, effort, folder or Claude in Chrome: relay.ts refuses those for another runner's thread.
   'threads.update': { what: 'Rename, archive, star, hibernate, and from the Mac its login or model', relay: 'yes', phone: { via: 'update' } },
   'threads.markSeen': { what: 'Marking it read', relay: 'yes', phone: { via: 'update' } },
   'threads.hibernateWhen': { what: 'Hibernate until something happens', relay: 'yes', phone: { no: 'The phone hibernates until a time only.' } },

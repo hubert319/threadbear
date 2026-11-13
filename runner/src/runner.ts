@@ -161,6 +161,7 @@ import { LAB_REVIEW_ROUNDS, applyAnswers, fixedSinceLastRound, labReviewPart, le
 import { looseEndsPart, type LooseEndsPart } from './runner/loose-ends.ts';
 import { quietInboxPart, type QuietInboxPart } from './runner/quiet-inbox.ts';
 import { CONFINED_NO_SANDBOX, sandboxFor } from './sandbox.ts';
+import { checkChrome, chromeAllowed } from './chrome.ts';
 import { COPIED_REFUSAL, neutraliseCopied, realCopy } from './real-copy.ts';
 
 export type Notification =
@@ -2006,6 +2007,7 @@ export class Runner {
         effort: rec.effort,
         permissionMode: rec.permissionMode,
         ...(rec.confined ? { confined: true } : {}),
+        ...(chromeAllowed(rec) ? { chrome: true } : {}),
         sessionId: rec.nativeSessionId,
         resume,
         ...(resume && rec.resumeAt ? { resumeAt: rec.resumeAt } : {}),
@@ -2907,6 +2909,8 @@ export class Runner {
     // With poolId: the provider picked in the menu (its column), for a
     // pool with logins of both. Else the model's, else the thread's own.
     provider?: Provider;
+    // Claude in Chrome (ThreadRecord.chrome): from the CLI's next start.
+    chrome?: boolean;
   }): { thread: ThreadSummary } {
     const st = this.mustGet(params.threadId);
     const { rec, rt } = st;
@@ -2920,6 +2924,12 @@ export class Runner {
     if (params.carryOn && params.accountId !== undefined && (this.refusing || this.draining)) {
       throw new RpcError(ErrorCode.busy, 'Threadbear is restarting, so it can\'t carry on just now. Try again in a moment.');
     }
+    if (params.chrome === true) {
+      const into = params.cwd?.trim() ? this.sandboxed(path.resolve(expandHome(params.cwd.trim()))) : false;
+      checkChrome({ permissionMode: params.permissionMode ?? rec.permissionMode, confined: Boolean(rec.confined) || into });
+    }
+    // Whether its CLI runs with Claude in Chrome now, to see below if this changes that.
+    const chromeWas = chromeAllowed(rec);
     let release = false;
     let stop = false;
     const pool = typeof params.poolId === 'string' && params.accountId === undefined ? this.poolById(params.poolId) : undefined;
@@ -3108,6 +3118,16 @@ export class Runner {
         }
       }
     }
+    if (params.chrome === true) rec.chrome = true;
+    else if (params.chrome === false) delete rec.chrome;
+    // A CLI flag: a live CLI that should start with it, or without, goes
+    // once idle and the next message resumes in a fresh one (as a login
+    // change does). A Chrome thread put on Auto refuses the tools till then
+    // (the adapter's hook).
+    const chromeRestart = Boolean(rt.session) && !release && chromeAllowed(rec) !== chromeWas;
+    if (chromeRestart && rt.turn && params.chrome !== undefined) {
+      this.emit(st, { type: 'system.note', text: `Claude in Chrome ${rec.chrome ? 'is on' : 'is off'} from the next turn. This turn carries on as it started.` }, rt.turn.turnId);
+    }
     if (nextTurn.length) {
       this.emit(
         st,
@@ -3181,7 +3201,7 @@ export class Runner {
       rt.releaseWhenIdle = true;
       if (rt.turn) this.interrupt(rec.id);
       else this.releaseSession(st);
-    } else if (release) {
+    } else if (release || chromeRestart) {
       // Another login or folder: the CLI goes now, or once its background
       // work is done (scheduleIdle). The next message gets the fresh one
       // either way.
@@ -3601,6 +3621,7 @@ export class Runner {
     if (rec.poolId) s.poolId = rec.poolId;
     if (rec.waitingForRoom) s.waitingForRoom = { ...rec.waitingForRoom };
     if (rec.carryOnAtReset === false) s.carryOnAtReset = false;
+    if (rec.chrome) s.chrome = true;
     if (rec.waitingForNetwork) s.waitingForNetwork = { since: rec.waitingForNetwork.since };
     if (rec.needs && rec.needs.seq === rec.lastTurnCompletedSeq) {
       s.needs = rec.needs.needs;

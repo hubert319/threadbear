@@ -166,6 +166,10 @@ export type ThreadRecord = {
   // (Daybreak, 7 Nov 2026), and its agent counts as restricted
   // (threadbear-mcp.ts, "Raising access").
   confined?: true;
+  // Its Claude CLI starts with Claude in Chrome (--chrome), so the agent can
+  // drive the user's signed-in Chrome; never passed while confined or on
+  // Auto (docs/protocol.md, "Claude in Chrome").
+  chrome?: true;
   // "Plan first": the mode approving the plan goes back to, and the plan
   // waiting for Mike (its plan.proposed itemId).
   modeBeforePlan?: PermissionMode;

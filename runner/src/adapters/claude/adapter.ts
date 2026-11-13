@@ -7,6 +7,7 @@ import type { HookInput, McpServerConfig, ModelInfo, Options, PermissionResult, 
 import type { Account, ContextUsage, EffortLevel, ModelChoice, PermissionMode, Question, QueuedAnswers, QueuedCall } from '../../protocol.ts';
 import { isEffortLevel } from '../../protocol.ts';
 import fs from 'node:fs';
+import { chromeAllowed } from '../../chrome.ts';
 import type { AgentAdapter, AgentSession, RewindRequest, RewindResult, SessionSink, StartSessionOptions, UserInput } from '../types.ts';
 import { RewindRefusedError } from '../types.ts';
 import type { SlashCommand } from '../../slash-commands.ts';
@@ -364,6 +365,9 @@ type WaitingCard = { toolUseId: string; queued: QueuedCall[]; grants: Map<string
 // blocked it (8 Nov 2026), so this says whose decision it was.
 export const QUEUED_DENIED = 'The user said no to this call on its permission card. It is their decision, not an error or a hook failing, so don\'t retry it: ask them how to proceed.';
 
+const CHROME_TOOLS = 'mcp__claude-in-chrome__';
+export const CHROME_IN_AUTO = "Claude in Chrome is off while this thread is on Auto, as Auto reads untrusted text and Chrome has the user's logins.";
+
 class ClaudeSession implements AgentSession {
   private opts: StartSessionOptions;
   private sink: SessionSink;
@@ -498,6 +502,9 @@ class ClaudeSession implements AgentSession {
           // ...and keeps the runner's token from a thread that isn't on Full
           // access (secrets-guard.ts).
           { matcher: [QUEUE_HOOK_MATCHER, ...SECRETS_ONLY_TOOLS].join('|'), hooks: [async (input) => this.onSecretsCall(input) ?? this.onQueuedCall(input) ?? this.onEditCall(input)] },
+          // A Chrome session switched to Auto keeps the tools until its CLI
+          // restarts without them: refused meanwhile, as Auto reads untrusted text.
+          ...(chromeAllowed(opts) ? [{ matcher: `${CHROME_TOOLS}.*`, hooks: [async () => (this.mode === 'auto' ? { hookSpecificOutput: { hookEventName: 'PreToolUse' as const, permissionDecision: 'deny' as const, permissionDecisionReason: CHROME_IN_AUTO } } : {})] }] : []),
           // A hook's ask comes before allow rules, so it's how a folder's
           // untrusted ones stop applying once the thread leaves Full
           // (askBeforeEveryTool). Only on a session that may need it.
@@ -505,6 +512,9 @@ class ClaudeSession implements AgentSession {
         ],
         SessionStart: [{ hooks: [async (input) => this.onCompact(input)] }],
       },
+      // Claude in Chrome (StartSessionOptions.chrome): a CLI flag, so it
+      // holds for this CLI's life; the runner restarts it when it changes.
+      ...(chromeAllowed(opts) ? { extraArgs: { chrome: null } } : {}),
       abortController: this.abort,
       spawnClaudeCodeProcess: ((spawn, sb) => (sb ? sandboxSpawner(spawn, sb, opts.threadId) : opts.confined ? () => { throw new Error(CONFINED_NO_SANDBOX(opts.cwd)); } : spawn))(
         groupSpawner(deps.registry, deps.log, (line) => this.stderr(line), opts.threadId),

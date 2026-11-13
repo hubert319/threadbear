@@ -811,3 +811,36 @@ test('Stop hook: a notice handed over with "Now write your reply" does not undo 
   assert.equal((await stop({ hook_event_name: 'Stop', stop_hook_active: false })).reason, ONE_REPLY_END_TURN_NUDGE);
   state.close!();
 });
+
+test('chrome: the CLI starts with --chrome only on a thread that asked, outside a sandbox and Auto', async () => {
+  const plain = start();
+  assert.equal(plain.state.options.extraArgs?.chrome, undefined);
+  plain.state.close!();
+  const on = start([], { chrome: true, permissionMode: 'full' });
+  assert.deepEqual(on.state.options.extraArgs, { chrome: null });
+  on.state.close!();
+  // Untrusted text in both, and Chrome has the user's logins.
+  for (const extra of [{ chrome: true, permissionMode: 'auto' }, { chrome: true, permissionMode: 'full', confined: true }]) {
+    const off = start([], extra, { sandboxFor: () => ({ image: 'x' }) });
+    assert.equal(off.state.options.extraArgs?.chrome, undefined, JSON.stringify(extra));
+    off.state.close!();
+  }
+});
+
+test('chrome: a session switched to Auto refuses the Chrome tools until its CLI restarts without them', async () => {
+  const s = start([], { chrome: true, permissionMode: 'full' });
+  const hooks = s.state.options.hooks.PreToolUse as { matcher?: string; hooks: ((i: unknown) => Promise<any>)[] }[];
+  const call = async (tool_name: string) => {
+    for (const h of hooks) {
+      if (h.matcher && !new RegExp(`^(${h.matcher})$`).test(tool_name)) continue;
+      const out = await h.hooks[0]({ hook_event_name: 'PreToolUse', tool_name, tool_input: {} });
+      if (out?.hookSpecificOutput?.permissionDecision) return out.hookSpecificOutput.permissionDecision;
+    }
+    return undefined;
+  };
+  assert.equal(await call('mcp__claude-in-chrome__navigate'), undefined);
+  await s.session.setPermissionMode('auto');
+  assert.equal(await call('mcp__claude-in-chrome__navigate'), 'deny');
+  assert.equal(await call('Bash'), undefined);
+  s.state.close!();
+});

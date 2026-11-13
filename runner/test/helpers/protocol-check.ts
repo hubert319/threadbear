@@ -185,6 +185,7 @@ export function checkSummary(t: Obj): string[] {
   if (t.archiveVerdict !== undefined && (!['worked', 'didntWork', 'notNeeded'].includes(t.archiveVerdict as string) || t.archivedAt === undefined)) problems.push('archiveVerdict');
   if (t.poolId !== undefined && (!isStr(t.poolId) || !t.poolId)) problems.push('poolId');
   if (t.carryOnAtReset !== undefined && t.carryOnAtReset !== false) problems.push('carryOnAtReset');
+  if (t.chrome !== undefined && t.chrome !== true) problems.push('chrome');
   if (t.waitingForRoom !== undefined) {
     const w = t.waitingForRoom;
     const ok = w && typeof w === 'object' && isIso(w.until) && (w.accountId === undefined || isStr(w.accountId)) && Object.keys(w).every((k) => ['until', 'accountId'].includes(k));
@@ -319,7 +320,7 @@ export function checkSummary(t: Obj): string[] {
   const allowed = new Set([
     'id', 'title', 'cwd', 'accountId', 'provider', 'model', 'permissionMode', 'status', 'live', 'needsYou', 'createdAt', 'updatedAt',
     'lastActivityAt', 'snoozedUntil', 'snoozedUntilRestart', 'snoozedUntilRelease', 'archivedAt', 'archivedBy', 'archiveVerdict', 'starredAt', 'preview', 'lastSeq', 'lastSeenSeq', 'nativeSessionId', 'contextTokens', 'costUsd',
-    'poolId', 'waitingForRoom', 'carryOnAtReset', 'waitingForNetwork', 'wakeWhen', 'waitingOn',
+    'poolId', 'waitingForRoom', 'carryOnAtReset', 'chrome', 'waitingForNetwork', 'wakeWhen', 'waitingOn',
     'effort', 'modelInUse', 'effortInUse', 'contextWindow', 'panels', 'actions', 'hooks', 'patches', 'background', 'subagents', 'projects', 'worktree',
     'needs', 'asks', 'asksSeq', 'highlightsAt', 'panelRequest', 'share', 'startedBy', 'asked', 'keywords', 'looseEnds',
   ]);

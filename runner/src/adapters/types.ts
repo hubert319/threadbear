@@ -34,6 +34,11 @@ export type StartSessionOptions = {
   // Its CLI must run in a sandbox (sandbox.ts, ThreadRecord.confined): an
   // adapter that can't put it in one refuses to start it.
   confined?: boolean;
+  // Claude: start the CLI with Claude in Chrome (--chrome), so the agent
+  // can drive the user's own signed-in Chrome (ThreadRecord.chrome). The
+  // adapter leaves it off when confined or in Auto, which read untrusted
+  // text; Codex and ACP ignore it.
+  chrome?: boolean;
   // Native session id. With resume=false it's pre-assigned to a brand new
   // session; with resume=true the CLI loads that session's transcript.
   // Codex assigns its own ids, so it ignores this when resume=false and

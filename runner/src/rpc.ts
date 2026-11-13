@@ -599,6 +599,8 @@ export class RpcServer {
       case 'threads.create': {
         // On another runner (docs/protocol.md, "Other runners' threads through the backend").
         if (typeof p.runnerId === 'string' && this.opts.relay) {
+          // A command through the backend doesn't carry it (Claude in Chrome).
+          if (p.chrome === true) throw bad("Claude in Chrome is only for this Mac's threads; start it in a thread on that Mac.");
           return this.opts.relay.create(p.runnerId, p).then((res) => {
             // Never one of this runner's own: its requests would come here.
             const id = (res as { thread?: { id?: unknown } }).thread?.id;
@@ -607,6 +609,7 @@ export class RpcServer {
           });
         }
         if (p.worktree !== undefined && typeof p.worktree !== 'boolean') throw bad('worktree must be a boolean');
+        if (p.chrome !== undefined && typeof p.chrome !== 'boolean') throw bad('chrome must be a boolean');
         const res = r.create({
           text: optString(p, 'text') ?? '',
           images: optImages(p),
@@ -618,6 +621,7 @@ export class RpcServer {
           permissionMode: optMode(p),
           title: optString(p, 'title'),
           ...(p.worktree === false ? { worktree: false } : {}),
+          ...(p.chrome === true ? { chrome: true } : {}),
           // Only ever narrows (a draining runner passing on a sandboxed
           // agent's create_thread), so any client may ask for it.
           ...(p.confined === true ? { confined: true } : {}),
@@ -704,6 +708,10 @@ export class RpcServer {
         if (p.carryOn !== undefined) {
           if (typeof p.carryOn !== 'boolean') throw bad('carryOn must be a boolean');
           upd.carryOn = p.carryOn;
+        }
+        if (p.chrome !== undefined) {
+          if (typeof p.chrome !== 'boolean') throw bad('chrome must be a boolean');
+          upd.chrome = p.chrome;
         }
         return r.update(upd);
       }

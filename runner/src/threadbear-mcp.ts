@@ -49,6 +49,8 @@ import { cutSafely, firstLineSafely } from './safe-cut.ts';
 import { pickRunner } from './moves.ts';
 import { FINDINGS_REFUSALS, FINDINGS_REFUSED, MAX_FINDINGS, findingsProblem, refusalsThisTurn } from './runner/lab-review.ts';
 
+const CHROME_ARG = z.boolean().optional().describe("Claude in Chrome (the user's signed-in Chrome), only if they ask. Not on Auto or sandboxed. Applies from its CLI's next start.");
+
 // What the tools drive: the Runner itself, or during a handover
 // (docs/protocol.md) a ThreadRouter (handover.ts) that reaches threads on
 // the other runner, which is why every call may be a promise.
@@ -606,6 +608,7 @@ export function buildThreadbearTools(
       `model: ${t.model ?? 'default'}${t.modelInUse ? ` (running as ${t.modelInUse})` : ''}`,
       `effort: ${t.effort ?? 'default'}${t.effortInUse ? ` (${t.effortInUse} last turn)` : ''}`,
       `permissions: ${t.permissionMode === 'full' ? 'full access' : t.permissionMode === 'auto' ? 'auto (a classifier checks each action)' : t.permissionMode === 'plan' ? 'plan first (changes nothing until the user approves its plan)' : 'ask before edits'}`,
+      t.chrome ? `Claude in Chrome: on${t.permissionMode === 'auto' ? ' (off while on Auto)' : ''}` : '',
       t.snoozedUntil ? `snoozed until: ${snoozeEnd(t)}` : '',
       t.archivedAt ? `archived: ${t.archivedAt}${archivedHow(t)}` : '',
       `last activity: ${relativeTime(t.lastActivityAt, now())}`,
@@ -1868,14 +1871,16 @@ export function buildThreadbearTools(
         permissionMode: z.enum(['full', 'ask', 'auto']).optional().describe('"full" (default), "ask" before edits and commands, or "auto": a classifier approves or blocks each action and asks only when it can\'t decide, for work on untrusted text (Claude only; on Codex it acts like ask).'),
         why: z.string().optional().describe('A few plain words on why this thread exists, about 6 ("fixing a hook it hit"). The sidebar shows them when the user hovers the mark on its row, as they have none of your context for it.'),
         runner: z.string().optional().describe('Another of the user\'s machines to start it on: its name, or "main". folder is a path there (~ for its home). Where this machine can\'t, it asks the user first and waits.'),
+        chrome: CHROME_ARG,
       },
-      handle(async ({ text, title, folder: f, pool: p, account: acc, model, effort, permissionMode: asked, why, runner }, extra) => {
+      handle(async ({ text, title, folder: f, pool: p, account: acc, model, effort, permissionMode: asked, why, runner, chrome }, extra) => {
         // From a thread not in full mode, the new thread gets its mode
         // unless the call says otherwise, and anything above it asks
         // (raising access, above). On another machine too.
         const caller = await restricted();
         const permissionMode = asked ?? caller?.mode;
         const elsewhere = Boolean(runner?.trim() && control.startOn);
+        if (chrome && runner?.trim()) throw new Error("chrome is only for threads on this machine; start it from a thread on that one.");
         // Where it would run, as the card says it (the real folder here; a
         // path on another machine as given), and whether in a sandbox: from
         // a sandboxed thread one that isn't is more than it has, whatever
@@ -1885,8 +1890,14 @@ export function buildThreadbearTools(
           const cwd = there ? f?.trim() : await folder(f ?? '.');
           const confined = Boolean(caller?.confined && !there && cwd && control.sandboxed?.(cwd));
           const target: Authority = { mode: permissionMode ?? 'full', confined };
-          if (caller && above(target, caller)) {
-            await confirm('create_thread', [`Start a thread with ${accessName(target, caller)}${cwd ? ` in ${cwd}` : ''}${there ? ` on ${runner!.trim()}` : ''}`], { from: head.trim(), text, ...(title?.trim() ? { title: title.trim() } : {}), folder: cwd, permissionMode: target.mode, ...(there ? { runner } : {}) }, extra?.signal);
+          const raising = Boolean(caller && above(target, caller));
+          // Chrome has the user's logins: from a restricted thread, always a card.
+          if (raising || (caller && chrome)) {
+            const reasons = [
+              ...(raising ? [`Start a thread with ${accessName(target, caller!)}${cwd ? ` in ${cwd}` : ''}${there ? ` on ${runner!.trim()}` : ''}`] : []),
+              ...(chrome ? [`Let ${raising ? 'it' : `a new thread${cwd ? ` in ${cwd}` : ''}`} use Claude in Chrome, with your logins`] : []),
+            ];
+            await confirm('create_thread', reasons, { from: head.trim(), text, ...(title?.trim() ? { title: title.trim() } : {}), folder: cwd, permissionMode: target.mode, ...(there ? { runner } : {}), ...(chrome ? { chrome: true } : {}) }, extra?.signal);
             if (!there) await sameFolder(f ?? '.', cwd!);
           }
           return { cwd, confined };
@@ -1920,6 +1931,7 @@ export function buildThreadbearTools(
           model,
           effort,
           permissionMode,
+          ...(chrome ? { chrome: true } : {}),
           startedBy: { kind: 'thread', label: 'Agent', threadId: selfId, ...(why?.trim() ? { why: cutSafely(why.replace(/\s+/g, ' ').trim(), MAX_BYLINE) } : {}) },
         });
         const where = r.thread.poolId ? ` It's in the ${r.thread.poolId} pool, so it moves to another login if this one runs dry.` : '';
@@ -1968,8 +1980,9 @@ export function buildThreadbearTools(
         permissionMode: z.enum(['full', 'ask', 'auto']).optional(),
         snooze: z.string().optional().describe('Snooze until: 30m, 2h, 1d, tomorrow, an ISO time, "restart" (until the runner next starts), "release" (until it starts on a new release), or "off" to wake it.'),
         archived: z.boolean().optional().describe('true to archive, false to bring back to the inbox.'),
+        chrome: CHROME_ARG,
       },
-      handle(async ({ threadId, id: alias, title, mikeAsked, model, effort, pool: p, permissionMode, snooze, archived }, extra) => {
+      handle(async ({ threadId, id: alias, title, mikeAsked, model, effort, pool: p, permissionMode, snooze, archived, chrome }, extra) => {
         const asked = threadId ?? alias;
         const hit = asked ? await find(asked) : { id: selfId };
         const remote = opts.remote?.();
@@ -1978,7 +1991,7 @@ export function buildThreadbearTools(
           // what the Mac app's sidebar can do there. A title stays with
           // that runner, which alone knows whether the user named it.
           const { t, runner } = hit.other;
-          if ([title, model, effort, p, permissionMode].some((x) => x !== undefined)) throw new Error(`"${t.title}" runs on ${runner}: only snooze and archive change it from here. Do the rest in a thread on ${runner}.`);
+          if ([title, model, effort, p, permissionMode, chrome].some((x) => x !== undefined)) throw new Error(`"${t.title}" runs on ${runner}: only snooze and archive change it from here. Do the rest in a thread on ${runner}.`);
           if (snooze === undefined && archived === undefined) throw new Error('Nothing to change: pass snooze or archived.');
           const change: Record<string, unknown> = {};
           if (archived !== undefined) {
@@ -2012,6 +2025,7 @@ export function buildThreadbearTools(
         }
         if (archived !== undefined) upd.archived = archived;
         if (archived === true) upd.archivedBy = 'agent';
+        if (chrome !== undefined) upd.chrome = chrome;
         // Raising access (above): a mode above the thread's own asks, from a
         // thread not in full mode; lowering doesn't.
         // A sandboxed thread's agent counts as restricted here too, and
@@ -2035,6 +2049,10 @@ export function buildThreadbearTools(
           // The mode it has already is left out, so this write landing after
           // someone else lowers it (a handover's round trip) can't raise it back.
           else if (permissionMode === t.mode) delete upd.permissionMode;
+        }
+        if (chrome === true && by) {
+          const t = await modeOf(id);
+          await confirm('update_thread', [`Let ${threadName(id, t.title)} use Claude in Chrome, with your logins`], { threadId: id, chrome: true }, extra?.signal);
         }
         // From Mike's level (Full outside any sandbox) a login change may
         // take a sandboxed thread out of it, as move_thread's may.

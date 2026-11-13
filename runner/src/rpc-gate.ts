@@ -135,6 +135,8 @@ export class CallerGate {
         // runner's default (which may be full).
         const mode = (p.permissionMode ?? caller.mode) as PermissionMode;
         if (above({ mode, confined: false }, caller)) throw needs(`starting a thread with ${MODE_NAMES[mode] ?? mode}`, 'create_thread');
+        // Chrome has the user's logins (docs/protocol.md, "Claude in Chrome").
+        if (p.chrome === true) throw needs('starting a thread with Claude in Chrome', 'create_thread');
         const given = p.startedBy && typeof p.startedBy === 'object' ? (p.startedBy as Params) : {};
         // Never out of a sandbox from here.
         const { unconfine: _u, ...rest } = p;
@@ -190,9 +192,15 @@ export class CallerGate {
     if (!id) return out;
     const self = id === threadId;
     for (const k of Object.keys(p)) {
-      if (!['threadId', 'title', 'titleBy', 'cwd', 'accountId', 'poolId', 'model', 'effort', 'permissionMode', 'snoozedUntil', 'archived', 'archivedBy', 'starred', 'byAgent'].includes(k)) {
+      if (!['threadId', 'title', 'titleBy', 'cwd', 'accountId', 'poolId', 'model', 'effort', 'permissionMode', 'snoozedUntil', 'archived', 'archivedBy', 'starred', 'byAgent', 'chrome'].includes(k)) {
         throw needs(`setting ${k} on a thread`);
       }
+    }
+    // Off takes nothing; on reaches the user's logins in Chrome.
+    if (p.chrome === true) throw needs(`turning on Claude in Chrome for ${self ? 'this thread' : this.title(id)}`, 'update_thread');
+    if (p.chrome === false) {
+      // Lowering only, but still another thread's restart.
+      if (!self && above(this.targetAccess(id), caller)) throw needs(`changing ${this.title(id)}`, 'update_thread');
     }
     if (self && (p.archived === true || (p.snoozedUntil !== undefined && p.snoozedUntil !== null))) {
       throw new RpcError(ErrorCode.notAllowed, "Can't snooze or archive the thread this runs in from inside its own turn. Call end_turn with archive: true or a snooze instead.");

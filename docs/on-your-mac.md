@@ -230,6 +230,12 @@ File references are where to look.
   connects, the runner runs `lsof` and `ps` on that one connection to see
   which process it is and whether it's under a thread's CLI
   (`runner/src/peer.ts`, docs/protocol.md "Who's really calling").
+- **A thread you turn Claude in Chrome on for** (`chrome` on the thread,
+  docs/protocol.md "Claude in Chrome", `runner/src/chrome.ts`) starts its
+  Claude CLI with `--chrome`, which connects to the Claude in Chrome
+  extension in your own Chrome and acts there with your sign-ins. Off for
+  every thread unless you, or an agent on Full access, turn it on for that
+  one (an agent off Full asks you on a card); never on Auto or in a sandbox.
 - **When OpenCode or Cursor's CLI is installed and logged in** it also starts the
   `opencode acp` and Cursor's `agent acp` CLIs for threads on them, runs each
   with `--version` when the runner starts, and runs its own updater

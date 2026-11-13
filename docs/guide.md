@@ -403,6 +403,17 @@ failed update, start on it too, so on Ask before edits (or Auto on Codex,
 which asks before edits) they wait for you to allow what they need. Deleting
 a thread is one thing an agent always has to ask about, whatever the mode.
 
+A Claude thread can also drive your own Chrome, signed in as you, through
+the Claude in Chrome extension, when you ask for it: tell an agent to start
+the thread with Chrome, or to turn Chrome on for a thread (`create_thread`
+or `update_thread` with `chrome`). It's off for every thread until then. As
+it's a setting for the CLI, it takes effect when the thread's CLI next
+starts: straight away for an idle thread, or once a running turn ends. It's
+never on for a thread on Auto or in a sandbox, which read text you didn't
+write, while Chrome has your logins: a Chrome thread switched to Auto can't
+use Chrome until you switch it back. An agent that isn't on Full access asks
+you on a card before turning it on.
+
 An agent in Ask before edits or Auto can't give itself more room, with its tools or with `tb`: `tb` in a thread signs in with that thread's own key and gets what the thread can do, and anything more is refused with a pointer to the tool that can ask you on a card. Switching
 any thread or schedule to more access, starting a thread with more access
 than its own (the threads it starts get its mode), messaging or moving a

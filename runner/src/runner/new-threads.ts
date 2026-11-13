@@ -20,6 +20,7 @@ import { checkImages, effortTitle, isClaudeModel, modelRow, modelTitle, newRunti
 import { providerInfo, providerName } from '../providers.ts';
 import { cutSafely } from '../safe-cut.ts';
 import { experimentOn } from '../experiments.ts';
+import { checkChrome } from '../chrome.ts';
 import { findSameWork, sameWorkNote, type SameWorkCandidate } from '../same-work.ts';
 
 export const newThreadsPart = {
@@ -50,6 +51,8 @@ export const newThreadsPart = {
     // Projects it starts in (New Thread on a project's page), joined
     // before its first turn, so that turn already has the project's brief.
     projectIds?: string[];
+    // Claude in Chrome (ThreadRecord.chrome).
+    chrome?: boolean;
   }): { thread: ThreadSummary; turnId: string } {
     if (!params.text && !params.images?.length) throw new RpcError(ErrorCode.badParams, 'text or images required');
     checkImages(params.images ?? []);
@@ -226,6 +229,7 @@ export const newThreadsPart = {
     startedBy?: ThreadStartedBy;
     confined?: boolean;
     unconfine?: boolean;
+    chrome?: boolean;
   }): { st: ThreadState; notes: string[] } {
     this.checkAccepting();
     // New threads belong on the new release.
@@ -260,6 +264,8 @@ export const newThreadsPart = {
     if (confined && !sandboxed) {
       throw new RpcError(ErrorCode.badParams, canSandbox ? `${cwd} isn't in a sandbox folder, and a sandboxed thread can only start threads in one without asking.` : `A sandboxed thread can only start Claude threads, as ${providerName(account.provider)} doesn't run in the sandbox.`);
     }
+    const permissionMode = params.permissionMode ?? this.cfg.defaults.permissionMode ?? 'full';
+    if (params.chrome) checkChrome({ permissionMode, confined: sandboxed });
     const now = this.isoNow();
     const id = crypto.randomUUID();
     const rec: ThreadRecord = {
@@ -271,8 +277,9 @@ export const newThreadsPart = {
       ...(poolId ? { poolId } : {}),
       provider: account.provider,
       // None named: runner.json's default (a new install's is auto), else full.
-      permissionMode: params.permissionMode ?? this.cfg.defaults.permissionMode ?? 'full',
+      permissionMode,
       ...(sandboxed ? { confined: true as const } : {}),
+      ...(params.chrome ? { chrome: true as const } : {}),
       status: 'idle',
       createdAt: now,
       updatedAt: now,

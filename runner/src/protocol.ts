@@ -226,6 +226,8 @@ export type ThreadSummary = {
   modelInUse?: string;
   effortInUse?: EffortLevel;
   permissionMode: PermissionMode;
+  // Its Claude CLI starts with Claude in Chrome (docs/protocol.md, "Claude in Chrome").
+  chrome?: true;
   status: ThreadStatus;
   live: boolean;
   needsYou: boolean;
