@@ -1,9 +1,21 @@
 // The Librarian view and its page (features/librarian.feature).
-import { Then } from '@cucumber/cucumber';
+import { Then, When } from '@cucumber/cucumber';
 import type { ThreadbearWorld } from '../support/world.ts';
 
 /** The librarian's state in words, and the page in place of a thread, from either app's dump. */
 type Extra = { librarian?: string | null; homePage?: { title: string } | null };
+
+When('I make room for the librarian settings', async function (this: ThreadbearWorld) {
+  await this.app.do({ cmd: 'resize', w: 1240, h: 1400 });
+});
+
+When('I follow a project in the librarian log', async function (this: ThreadbearWorld) {
+  await this.app.do({ cmd: 'click', tip: 'Open the project' });
+});
+
+Then("the librarian's project page is open", async function (this: ThreadbearWorld) {
+  await this.until('the project page', (d) => Boolean((d as unknown as { project?: { title: string } }).project?.title));
+});
 
 Then('the librarian says {string}', async function (this: ThreadbearWorld, words: string) {
   await this.until(`the librarian saying "${words}"`, (d) => (d as unknown as Extra).librarian === words);

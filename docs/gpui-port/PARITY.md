@@ -302,6 +302,18 @@ built parsers and gates with no launch of the app, which is the trap.)
   link, each on the first click, with the app coming in front each time.
   Not tried: PDF and video previews (their own views say yes,
   media_views.m) and the Terminal.
+### 2026-11-13 Panel switches, project links and the smaller tooltip gaps (`librarian.log`, `librarian.page`, `usage.pools`, `settings.general`)
+
+- Librarian log project names open their pages. Librarian and Usage use the
+  shared Mac switch, with their existing busy and optimistic states.
+- The unread dot says Needs you; a remote row's tip names its runner and
+  offline state. Settings' three explanatory texts, the pool name field,
+  the worktree destination and another runner's schedule folder say what
+  the Swift app says.
+- Verification: the automation build and 21 focused scenarios passed on
+  cloud (Librarian, Usage, Patches and automation), including real clicks
+  on the switches and project links. The Mac visual comparison is still
+  pending. The combined table above remains the earlier four-platform run.
 
 ### 2026-11-13 The first-run tour, the pages' intros and Finish setting up (`tour.firstrun`, `tour.intros`, `tour.setup`, `menu.help`)
 
