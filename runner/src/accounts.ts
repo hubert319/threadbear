@@ -122,7 +122,7 @@ export function discoverAccounts(cfg: DiscoveryConfig): Account[] {
   for (const { id, dir } of [...codex, ...numbered('codex')]) {
     if (isCodexLogin(dir)) out.push(codexAccount(id, dir));
   }
-  out.push(...acpAccounts({ paths: { cursor: cfg.cursorPath, opencode: cfg.opencodePath } }));
+  out.push(...acpAccounts({ paths: { cursor: cfg.cursorPath, opencode: cfg.opencodePath }, home: cfg.home }));
   for (const a of out) {
     const note = cfg.accountNotes?.[a.id];
     if (note) a.note = note;
