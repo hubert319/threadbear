@@ -302,6 +302,19 @@ built parsers and gates with no launch of the app, which is the trap.)
   link, each on the first click, with the app coming in front each time.
   Not tried: PDF and video previews (their own views say yes,
   media_views.m) and the Terminal.
+### 2026-11-13 The remaining script commands (`system.testharness`)
+
+- Older scripts can use `size`, `window`, `point` (click, drag, wheel and
+  hold), `room`, `account-ids`, `streaming`, `debug-info`, `convex` and
+  `runners-front`. Window targets include Settings, a review and a floating
+  panel. GPUI sheets and popovers share their parent's native window.
+- Input stays in the scripted window and copied text stays on its private
+  clipboard. Convex selection uses the same offered deployments as its menu.
+- Verification: the automation build and the focused four-file run passed
+  on cloud, 21 scenarios and 209 steps, including coordinates, window size,
+  anonymous login names, live text, row diagnostics and deployment selection.
+  Project tabs and handover commands remain with their own parity slice.
+
 ### 2026-11-13 Office previews, patch icons and Simulator (`file.quicklook`, `patches.icons`, `panel.image`, `patches.list`)
 
 - Office and iWork files use read-only Quick Look thumbnails on the Mac.
