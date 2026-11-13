@@ -22,6 +22,18 @@
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod package;
+
+/// A bounded, private copy of an iWork package, rooted at the gate's open
+/// directory descriptor. Nested links and special files are refused.
+pub fn snapshot_package(from: &std::fs::File, folder: &Path, name: &str, limit: u64) -> std::io::Result<PathBuf> {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    { package::snapshot(from, folder, name, limit) }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    { let _ = (from, folder, name, limit); Err(std::io::Error::other("Package previews aren't available here")) }
+}
+
 /// Writes `data` as `path`, readable and writable by this user only.
 pub fn write(path: &Path, data: &[u8]) -> std::io::Result<()> {
     write_with_mode(path, data, 0o600)

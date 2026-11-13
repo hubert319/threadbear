@@ -302,6 +302,22 @@ built parsers and gates with no launch of the app, which is the trap.)
   link, each on the first click, with the app coming in front each time.
   Not tried: PDF and video previews (their own views say yes,
   media_views.m) and the Terminal.
+### 2026-11-13 Office previews, patch icons and Simulator (`file.quicklook`, `patches.icons`, `panel.image`, `patches.list`)
+
+- Office and iWork files use read-only Quick Look thumbnails on the Mac.
+  iWork packages are copied through held directory descriptors, with bounds
+  on size, depth and entry count; nested links and special files are refused.
+  Quick Look sees a private snapshot, without document links or actions.
+- App, icns and PDF patch icons draw in colour. Application icons stay on
+  AppKit's main thread; file icons use ImageIO and CoreGraphics. The picture
+  panel opens Apple's signed Simulator through the gate, with feedback
+  while its signature is checked. Patches' project headings open their pages.
+- Menu bar items have the Swift app's system symbols.
+- Verification: 27 open-policy tests, the iWork package classification test,
+  three package snapshot tests and four opener source guards passed on
+  cloud. The native files pass the Mac compiler's syntax check. Native
+  runtime scenarios and screenshots are pending the Mac check host.
+
 ### 2026-11-13 Panel switches, project links and the smaller tooltip gaps (`librarian.log`, `librarian.page`, `usage.pools`, `settings.general`)
 
 - Librarian log project names open their pages. Librarian and Usage use the
