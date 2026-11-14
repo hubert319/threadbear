@@ -124,6 +124,11 @@ export type Config = {
   // done. On unless runner.json has `labReview: false` (Settings > General);
   // an experiment from 6 Nov until Mike made it standard on 10 Nov 2026.
   labReview: boolean;
+  // The name Claude threads report themselves under (CLAUDE_CODE_ENTRYPOINT,
+  // adapters/claude/adapter.ts), so the 5-hour meter doesn't count them as
+  // the Agent SDK. `threadbear` unless runner.json `claudeEntrypoint` names
+  // another, or is false for the SDK's own label (null here).
+  claudeEntrypoint: string | null;
   // Keep the Mac out of idle sleep while threads work (keep-awake.ts). On
   // unless runner.json says `keepAwake: false` (Settings > General).
   keepAwake: boolean;
@@ -207,6 +212,7 @@ export type RunnerJson = {
   bulletReplies?: boolean;
   oneReply?: boolean;
   labReview?: boolean;
+  claudeEntrypoint?: string | false;
   keepAwake?: boolean;
   // bringIn: how often a fork's runner starts a thread to bring in Mike's
   // releases (bring-in.ts): every so many days, 'important' or 'off'.
@@ -436,6 +442,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, opts: { readOnl
     // balance, and it's no longer in Settings).
     oneReply: json.oneReply !== false,
     labReview: json.labReview !== false,
+    claudeEntrypoint: json.claudeEntrypoint === false ? null : typeof json.claudeEntrypoint === 'string' && /^[a-z0-9][a-z0-9._-]{0,39}$/.test(json.claudeEntrypoint) ? json.claudeEntrypoint : 'threadbear',
     // On for everyone since 10 Nov 2026, after a few days as an experiment
     // on Mike's Mac; Settings turns it off for anyone who'd rather.
     keepAwake: json.keepAwake !== false,
