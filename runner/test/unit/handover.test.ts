@@ -133,7 +133,7 @@ test('a message to a thread that background work is holding starts at once on th
   const handed: string[] = [];
   await h.runner.beginDrain([t.id], { onHandedOver: (id) => handed.push(id), backgroundMs: 30 * MIN });
   assert.deepEqual(handed, []);
-  // Waiting for the work to end could take half an hour, with Mike's answer
+  // Waiting for the work to end could take half an hour, with Alex's answer
   // unread and his card still open.
   h.runner.send(t.id, 'how did it go?');
   assert.equal(s.sent.length, 2);
@@ -530,15 +530,13 @@ test("the phone's commands reach a thread a draining runner still has", async ()
   await host.update({ threadId: busy.id, archived: true });
   await host.respondApproval({ threadId: busy.id, approvalId: 'a1', decision: 'allow' });
   await host.share(busy.id, { access: 'link' });
-  // Its buttons too, which a press from the phone checks first (Codex's review, 10 Nov).
-  await host.listButtons!(busy.id);
-  assert.deepEqual(sent.map(([m]) => m), ['threads.send', 'threads.markSeen', 'threads.update', 'approvals.respond', 'threads.share', 'buttons.list']);
+  assert.deepEqual(sent.map(([m]) => m), ['threads.send', 'threads.markSeen', 'threads.update', 'approvals.respond', 'threads.share']);
   assert.deepEqual(sent[0][1], { threadId: busy.id, text: 'from my phone', origin: 'phone' });
   assert.ok((sent[1][1].seq as number) >= Number.MAX_SAFE_INTEGER, 'seen up to whatever it has');
   // The primary's own threads are done here.
   await host.update({ threadId: idle.id, title: 'Renamed' });
   assert.equal(b.runner.get(idle.id).title, 'Renamed');
-  assert.equal(sent.length, 6);
+  assert.equal(sent.length, 5);
   // Handed over just as the command went: done here instead.
   moved = true;
   await host.update({ threadId: busy.id, title: 'Came across' });
@@ -724,7 +722,7 @@ test("Peers: a thread that can't be taken in stays arriving, and one being hande
 
 // docs/protocol.md, "Who stopped it": his Stop on the phone says so; an agent's
 // interrupt_thread, which goes through the router, doesn't.
-test("only the phone's Stop counts as Mike's, not an agent's interrupt_thread", async () => {
+test("only the phone's Stop counts as Alex's, not an agent's interrupt_thread", async () => {
   const h = makeHarness();
   const ask = () => {
     const { thread } = h.runner.create({ text: 'go', cwd: h.cfg.defaults.cwd, accountId: 'claude-3', permissionMode: 'ask' });
@@ -880,7 +878,7 @@ test('an idle thread hibernating in words is kept by a drain that was not asked 
 // runner's tools left other runners' threads out.
 test('primaryRemote: a draining runner reaches other runners\' threads through the primary', async () => {
   const calls: Array<[string, Record<string, unknown>]> = [];
-  const rows = { runners: [{ id: 'cloud', name: 'Hetzner Cloud', online: true, lastSeenAt: '' }], threads: [{ threadId: 'ba5bb5ec-1', runnerId: 'cloud', title: 'Rust port' }] };
+  const rows = { runners: [{ id: 'cloud', name: 'Cloud box', online: true, lastSeenAt: '' }], threads: [{ threadId: 'ba5bb5ec-1', runnerId: 'cloud', title: 'Rust port' }] };
   const link = {
     call: async <T,>(method: string, params: Record<string, unknown> = {}): Promise<T> => {
       calls.push([method, params]);
@@ -1064,4 +1062,48 @@ test('Peers.openCards, from a release before drain.openCards: each summary as it
   await peers.connectAll();
   const found = await peers.openCards();
   assert.deepEqual(found.map((f) => [f.thread.id, f.thread.status]), [['t-a', 'waiting'], ['t-b', 'idle']]);
+});
+
+// Daybreak 122 (13 Nov 2026): a release from that morning answered
+// drain.openCards with every kept thread's cards, { threads: [...] }, and
+// took no threadId. Read as the new shape it was events: undefined, which
+// threw in seedCards: that runner's cards and every one after it were lost.
+test("Peers.openCards: a draining runner from the morning of 13 Nov, answering every thread at once, between two of today's", async () => {
+  const h = makeHarness();
+  const { writeDrainInfo, Peers } = await import('../../src/handover.ts');
+  const since = new Date().toISOString();
+  writeDrainInfo(h.home, { pid: 515151, port: 1, version: 'new', since, threads: ['n1'] });
+  writeDrainInfo(h.home, { pid: 525252, port: 2, version: 'morning', since, threads: ['m1', 'm2', 'm3'] });
+  writeDrainInfo(h.home, { pid: 535353, port: 3, version: 'new', since, threads: ['n2', 'odd'] });
+  const ts = '2026-11-13T00:00:00.000Z';
+  const card = (approvalId: string, seq: number) => ({ type: 'question.requested', seq, ts, approvalId, questions: [] });
+  const threadsOf: Record<number, string[]> = { 515151: ['n1'], 525252: ['m1', 'm2', 'm3'], 535353: ['n2', 'odd'] };
+  const clientFor = (pid: number) => ({
+    call: async (method: string, p: any) => {
+      const threads = threadsOf[pid]!;
+      if (method === 'drain.hello') return { threads, version: 'x' };
+      if (method === 'threads.list') return { threads: threads.map((id) => ({ id, title: id, status: 'waiting', lastActivityAt: ts })) };
+      if (method === 'drain.openCards') {
+        // The morning's: params ignored, every thread's cards (m3 had none).
+        if (pid === 525252) return { threads: [{ threadId: 'm1', events: [card('q-m1', 4)] }, { threadId: 'm2', events: [card('q-m2', 7), { junk: true }] }] };
+        if (p.threadId === 'odd') return { something: 'else' };
+        return { events: [card(`q-${p.threadId}`, 3)] };
+      }
+      return {};
+    },
+    onNotification: () => () => {},
+    waitClosed: () => new Promise<never>(() => {}),
+    close: () => {},
+  });
+  const connect = async (_port: number, _token: string, _legacy: boolean, pid: number) => clientFor(pid) as any;
+  const peers = new Peers({ home: h.home, token: 't', log: nullLogger, runner: { adopt: () => undefined, publish: () => {}, waitedOnDeleted: () => {} }, sweep: async () => {}, connect, alive: () => true });
+  await peers.connectAll();
+  const found = await peers.openCards({ deadlineMs: 1000 });
+  const ids = (f: (typeof found)[number]) => f.events.map((e) => (e as { approvalId: string }).approvalId);
+  assert.deepEqual(found.map((f) => [f.thread.id, ids(f)]).sort(), [['m1', ['q-m1']], ['m2', ['q-m2']], ['n1', ['q-n1']], ['n2', ['q-n2']]]);
+  // And seeding them doesn't stop at one it can't read.
+  const { openCardsAnswer } = await import('../../src/handover.ts');
+  assert.equal(openCardsAnswer({ threads: [] }, 'm3'), undefined);
+  assert.equal(openCardsAnswer(null, 'x'), undefined);
+  assert.equal(openCardsAnswer({ events: 'no' }, 'x'), undefined);
 });

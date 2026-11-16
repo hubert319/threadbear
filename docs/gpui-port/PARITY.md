@@ -37,9 +37,9 @@ earlier four-platform run.
 
 <!-- parity:start -->
 
-126 of 329 features have a spec so far, across 226 scenarios.
+125 of 329 features have a spec so far, across 225 scenarios.
 
-Scenarios passing: Swift: 207 of 226, Mac: 214 of 226, Windows: 192 of 226, Linux: 214 of 226.
+Scenarios passing: Swift: 207 of 225, Mac: 214 of 225, Windows: 192 of 225, Linux: 214 of 225.
 
 
 ### 0. Foundations everything else needs
@@ -216,7 +216,6 @@ Scenarios passing: Swift: 207 of 226, Mac: 214 of 226, Windows: 192 of 226, Linu
 | Feature | Swift | Mac | Windows | Linux |
 |---|---|---|---|---|
 | `terminal.panel` Terminal panel | pending | pending | pending | pending |
-| `cards.run` Run on the card | pending | pending | pending | pending |
 | `terminal.putcommand` Put a command in the Terminal | pending | pending | pending | pending |
 
 ### 14. Projects, Librarian, Schedules, Usage, Runners, Connectors, Updates
@@ -262,6 +261,58 @@ run or a screenshot from the running app. A slice with no runtime check doesn't
 count. (Ghostex's port log is where this shape comes from; its slices 214 to 268
 built parsers and gates with no launch of the app, which is the trap.)
 
+### 2026-11-13 Restarting onto the next version hands over, and threads keep their place (`system.handover`, `system.selfupdate`)
+
+- The GPUI app's restart onto a staged build was the window going and coming
+  back, and every thread opened at its end afterwards: scroll places were
+  only kept in memory. With the window plainly on screen it now hands over
+  as the Swift app's Handover.swift does: the staged bundle is swapped in,
+  started as a second copy (`open -n -g` with `--handover-from`, `-below`,
+  `-frame`), which opens its window unseen (alpha 0, no clicks) in the old
+  window's frame and just under it, loads the list and the open thread, then
+  shows itself there and says ready. The old app hands over the keys if it
+  had them, writes its drafts, says go with where it is now, and quits once
+  the new one says done (or a second later). The two talk through three
+  small files in `$TMPDIR/threadbear-handover-<old pid>`, not distributed
+  notifications. No ready in 20 s: the old app quits for a new one that's
+  still running, or restarts the old way if it isn't. The old app gone
+  without a go: the new one takes over anyway. The incoming app leaves
+  notifications and following main to the one showing until it takes over,
+  and doesn't swap at launch (the old app is running from the bundle that
+  would clear). Minimised, full screen, hidden, and Windows and Linux
+  restart as before.
+- What a restart saves now has every thread's scroll anchor that isn't at
+  its end, the open panes measured as it starts (up to 200 threads), and
+  puts them in the pane's memory before any thread opens. The Swift app
+  keeps only the open thread's.
+- Every guard the restart had still holds it: the rules and their
+  `restart_hold` wording are unchanged.
+- Files: `desktop/core/src/handover.rs` (the pure parts, with tests),
+  `desktop/gpui/src/handover.rs`, `app_update.rs`, `rows.rs`, `main.rs`,
+  `app.rs`, `drafts.rs`, `notify.rs`, `thread.rs`, `updates_panel.rs`
+  (`updates` with `restartState`, and `fresh` on `restore`),
+  `features/updates.feature`, `docs/guide.md`, `docs/on-your-mac.md`.
+- Verification: core's handover tests and the scroll memory test on Tinker
+  Desk. The new scenario (a thread scrolled up comes back where it was)
+  passes there and fails with the recall taken out. A release bundle
+  installed in a throwaway place on Tinker Desk's screen, with a staged
+  next build and the mock runner, restarted by itself after five idle
+  seconds: the new copy was ready 0.32 s after it loaded, took over in
+  front, and the old one quit; a recording at 10 frames a second shows the
+  window in place on every frame. The one visible change was that run's
+  first-run tour card fading in again, as its throwaway data folder had
+  never finished the tour.
+- Codex (gpt-6.1-sol) tried to break it twice. What held up is fixed:
+  drafts and settings stay the old app's until the new one takes over,
+  the go waits for anything a restart by itself would have waited for
+  (a shell, a menu, a picture still coming in) that started while the new
+  copy loaded, the old window stops taking clicks as it says go, a new copy
+  that dies after ready or before done gets the old way's restart, and the
+  places carried in the go replace any the new copy was still paging to.
+  Left as it is: a setting changed in the old window during the second or
+  two of loading is in the new app's file but not on screen until it's
+  next opened. The restart ran again after each round, the same way.
+
 ### 2026-11-13 A project's page in tabs, with Go's Show Previous and Next Tab (`projects.tabs`)
 
 - With the projectDecisions experiment on, a project's page is in two tabs
@@ -302,6 +353,184 @@ built parsers and gates with no launch of the app, which is the trap.)
   link, each on the first click, with the app coming in front each time.
   Not tried: PDF and video previews (their own views say yes,
   media_views.m) and the Terminal.
+### 2026-11-13 Gaps from the in-thread parity recheck (`card.done`, `composer.modelpicker`, `composer.runner`, `composer.filedrop`, `drag.fileout`, `composer.return`, `rich.worklinks`)
+
+From the coordinator's recheck of everything inside a thread
+(`~/Library/Caches/Threadbear/parity-audit/recheck-thread.md`):
+
+- A closed card's row draws as the Swift one does: a quiet card with one
+  grey "✓ Done" line and Archive at its right (`doneText` with `isOpen`
+  false), or a grey "Needed you" over the asks in grey, numbered when
+  there are several. It was the old placeholder (a bold "Done" over every
+  old follow-up). The recheck took this for something on screen after
+  every turn, but both apps' reducers leave a closed card out of the rows
+  ("A card that's been answered or moved past isn't shown", 28 Oct;
+  `TranscriptReducer.swift:1604`, `core/src/reducer/model.rs:2066`), so
+  neither shows one today; this only keeps the drawing the same.
+- Return in the model picker's search picks the first model it lists, as
+  the Swift search's `onSubmit` does.
+- A new thread on another Mac: Runs on's Folder is always there, with
+  Other… to type a path on that Mac (`typeRemoteFolder`), so a first thread
+  on a fresh Mac can pick its folder. A typed folder heads the list.
+- Drops: let go over the message box's words, a file goes in where it was
+  let go (`characterIndexForInsertion`; the kit's input has
+  `offset_for_point` for it); anywhere else over the thread it goes at the
+  cursor as before. The app's own drags (a picture in the transcript, a
+  Highlights file, the pane's picture) only go in when let go over a box:
+  over the rest of the thread they're a drag out that changed its mind
+  (`takesDropFromThread`). The three drag-out scenarios that let go over
+  the transcript now let go over the box, and a fourth checks the
+  transcript turns one away.
+- Option-Return adds a line, as Shift-Return does (an `alt-enter` binding
+  in the kit's input).
+- With Reduce Motion on, a paged asks card's pages crossfade in place in
+  0.12 s and the number changes without rolling (ComposerCardHost).
+- A ↑ work link puts its step a third of the way down the view, not at the
+  very top, a frame after scrolling to it so the rows above are measured.
+- Not done: dragging a file link or a web link out of a reply's words. GPUI
+  hands the system only files (`external_drag_payload`), so a web link
+  can't go out as a URL, and the kit's selectable text takes a press on a
+  link as the start of a selection, so a file link has no drag to start
+  from yet. Both stay open under `drag.fileout`.
+- Found on the way, not fixed: on the cloud box (Linux) a scripted file drop
+  goes nowhere once the box has words in it, wherever it's let go; into an
+  empty box it goes in. The new drop-point scenario is `@gpui-pending` for
+  it. A Mac's real drops take the native capture path in thread.rs instead.
+  Fixed later that day under "File drops after typing" below.
+- No shot of Other…'s dialog: the app's `shot` draws the window without its
+  dialog layer. The typed folder was checked in the scripted app ("Starts in
+  backup on bruce").
+
+Verification: on the cloud box, composer-chips, remote-threads, sending,
+drag-out and composer-cards: 81 scenarios, all passing but the two then
+fixed or marked (remote-threads again afterwards: 27 of 27). `cargo check
+-p threadbear-gpui --features automation` on Tinker Desk. The scripted app
+in dark mode for the Runs on lines and Other….
+### 2026-11-13 Spelling in the message box, screen readers, Paste and Match Style (`composer.spelling`, `foundation.accessibility`, `menu.edit`)
+
+- The message box checks spelling as the Swift app's NSTextView did, from the
+  Mac's own spell checker (NSSpellChecker through objc2,
+  `gpui/src/text_services.rs`). A misspelled word gets a red wavy line once
+  it's typed (not while the caret's in it), grammar a green one when that's
+  on. The kit's textarea had no way to draw them, so `set_text_marks` is our
+  patch in `desktop/vendor/gpui-base` (the editor mode's decorations, which a
+  plain textarea lacked). The whole box is checked once typing pauses for a
+  quarter of a second; between checks the marks move with the words.
+- As a word ends (a space, a new line, punctuation), the Mac's correction
+  and the user's text replacements go in, each one edit ⌘Z takes back, and
+  smart quotes and dashes when switched on (off, as Swift's composer had
+  them). Correction and replacement start as the Mac's Keyboard settings
+  have them. Dictation and pastes aren't corrected, as AppKit doesn't.
+- The box's right-click menu is NSTextView's: the guesses for a misspelled
+  word, Ignore Spelling, Learn Spelling, Cut, Copy, Paste, then Spelling and
+  Grammar, Substitutions, Transformations and Speech (the Swift app's menu
+  bar never had those four; the re-check of 13 Nov listed them from
+  SwiftUI's optional `TextEditingCommands`, and the 12 Nov note above has
+  it right). Not here: AppKit's Show Spelling and Grammar and Show
+  Substitutions panels, which only an NSTextView can answer, Smart
+  Copy/Paste, Smart Links and Data Detectors, and the correction bubble.
+  AppKit's mark is dotted; GPUI draws a wavy line. Spelling is in the
+  message box only: Settings' fields, the rename field and a card's
+  "Something else" box don't check it yet. Windows and Linux have no spell
+  checker here.
+- Edit > Paste and Match Style (⌥⇧⌘V, Ctrl+Shift+V elsewhere) pastes only
+  the words into the message box.
+- Screen readers: GPUI makes an accessibility node only for an element with
+  a role, so every custom control that had a label (Send, Stop, the sidebar's
+  rows, the rail's buttons, chips, the cards' buttons, the shared `tipped`
+  helpers' 75 uses) and every custom element that takes a click now has one:
+  a button, a list item that's selected while open, a link, a radio button
+  or checkbox with its state, a progress indicator for the spinners, an
+  image, a splitter for the slash palette's edges. Send reports disabled
+  with nothing to send (`A11yDisabledExt`, made public in our gpui-base). A
+  wrapper that only names a kit control for scripts is a `GenericContainer`,
+  so the kit control inside is what VoiceOver reads.
+  `desktop/core/tests/a11y_roles_source.rs` fails on a label or a click
+  without a role. A full VoiceOver pass by ear is still to do.
+- Verification: on Tinker Desk's Mac, `TB_APP=gpui cucumber-js` with
+  `@composer.spelling`, `@foundation.accessibility`, `@menu.edit` and the
+  composer's own tags (`textbox`, `return`, `chipcopy`, `listcontinue`,
+  `send`), 22 of 22; `cargo test -p threadbear-core` (`spelling`,
+  `a11y_roles_source`); a dark shot of a debug build with three misspelled
+  words marked in the box. The spelling scenarios are `@swift-pending` (its
+  script can't read marks or the right-click menu) and pending on Windows
+  and Linux (no spell checker there).
+
+### 2026-11-13 File drops after typing (`composer.filedrop`, `composer.dropanywhere`)
+
+GPUI chose the input mode before translating a platform file drop into mouse
+events. After typing it kept keyboard mode, where `HitboxId::is_hovered`
+returns false, so no drop target took the file. An empty box worked because
+the window still started in mouse mode. Mac native capture bypassed that
+hover check; scripted drops on Mac failed the same way as Linux.
+
+`desktop/vendor/gpui-pre` is the published 0.3.11 crate with Entered, Pending
+and Submit leaving keyboard mode before dispatch. Touch mode is preserved;
+Exited and Ended keep their cleanup behavior. The input's point-to-offset
+calculation and the app's drop targets are unchanged. The drop-placement
+scenario is no longer `@gpui-pending`.
+
+Verification: the file-drop scenarios pass on Linux/Xvfb and Mac,
+including drops at the first letter, between words, on a second line,
+after a UTF-8 character, and on the transcript with words already in the
+box. Mac's native temporary-screenshot and browser-image-byte drop
+scenarios also pass.
+
+The broader Linux sending and drag-out run passed all 28 scenarios. The
+app's `file_drop` integration tests check each drop phase after typing,
+one delivery, drag cleanup and preserving touch mode. Run them with
+`cargo test -p threadbear-gpui --features automation --test file_drop`.
+### 2026-11-13 The remaining script commands (`system.testharness`)
+
+- Older scripts can use `size`, `window`, `point` (click, drag, wheel and
+  hold), `room`, `account-ids`, `streaming`, `debug-info`, `convex` and
+  `runners-front`. Window targets include Settings, a review and a floating
+  panel. GPUI sheets and popovers share their parent's native window.
+- Input stays in the scripted window and copied text stays on its private
+  clipboard. Convex selection uses the same offered deployments as its menu.
+- Verification: the automation build and the focused four-file run passed
+  on cloud, 21 scenarios and 209 steps, including coordinates, window size,
+  anonymous login names, live text, row diagnostics and deployment selection.
+  Project tabs and handover commands remain with their own parity slice.
+
+### 2026-11-13 Office previews, patch icons and Simulator (`file.quicklook`, `patches.icons`, `panel.image`, `patches.list`)
+
+- Office and iWork files use read-only Quick Look thumbnails on the Mac.
+  iWork packages are cloned or copied through held directory descriptors, with bounds
+  on size, depth and entry count; nested links and special files are refused.
+  Quick Look sees a private snapshot, without document links or actions.
+- App, icns and PDF patch icons draw in colour. Application icons stay on
+  AppKit's main thread after their paths are checked on a worker; file icons
+  use ImageIO and CoreGraphics, fitting small vector pages to the icon. The picture
+  panel opens Apple's signed Simulator through the gate, with feedback
+  while its signature is checked. Patches' project headings open their pages.
+- Menu bar items have the Swift app's system symbols.
+- Verification: 27 open-policy tests, the iWork package classification test
+  and the package/source guards passed on cloud. The final
+  [native Mac check](https://github.com/mikecann/threadbear/actions/runs/43412494682)
+  passed 17 focused Rust tests and 25 scenarios (246 steps), including the
+  Office thumbnail, Simulator signature checks, locked-file snapshots and
+  icon decoding. Window-only screenshots confirmed the document and all
+  three patch icons draw. Offscreen checks confirmed PDF crop, rotation and
+  upscaling; an oversized icns accepted by the old decoder is now refused.
+  Claude reviewed the gate, package traversal and native ownership changes.
+  Mac, Windows and Linux had compiled and passed Rust tests before the final
+  Mac-specific review fixes; these final fixes were checked on the Mac.
+
+### 2026-11-13 Panel switches, project links and the smaller tooltip gaps (`librarian.log`, `librarian.page`, `usage.pools`, `settings.general`)
+
+- Librarian log project names open their pages. Librarian and Usage use the
+  shared Mac switch's outside-form size, with their existing busy and
+  optimistic states: a 44×20 track and 26×16 knob, measured from the Swift
+  control in an offscreen NSHostingView on macOS 27.
+- The unread dot says Needs you; a remote row's tip names its runner and
+  offline state. Settings' three explanatory texts, the pool name field,
+  the worktree destination and another runner's schedule folder say what
+  the Swift app says.
+- Verification: 21 focused scenarios passed on cloud, then 22 on the Mac,
+  including clicks on both switches and project links. Native window shots
+  of Librarian and Usage were inspected beside the measured Swift switch
+  reference. The combined table above remains the earlier four-platform run.
 
 ### 2026-11-13 The first-run tour, the pages' intros and Finish setting up (`tour.firstrun`, `tour.intros`, `tour.setup`, `menu.help`)
 
@@ -481,6 +710,9 @@ and `@panel.image`; `cargo test` for `pinned_panels` (core) and
 - A scripted app never reaches the real BrowserBear: without
   `BROWSERBEAR_HOME` it has none. The specs run against a stand-in
   (`features/support/browserbear.ts`).
+- All six are `@windows-pending`: BrowserBear is a Mac tool on a Unix
+  socket, which the GPUI app only opens on Unix, and the stand-in can't
+  listen on a file path on Windows (GitHub's run 43399468986).
 - The Swift app's dump has no Browser button or pane and it's frozen, so
   the pane's scenarios are `@swift-pending`; the two link scenarios aren't,
   but weren't run against it, nor on Windows.
@@ -939,8 +1171,10 @@ Fixes from Codex's review of the slice before:
   carry `@windows-pending @linux-pending`, which `cucumber.mjs` and
   `parity.mjs` now understand. The Swift dump gives a video's size too, and
   both apps take `preview` `play`.
-- Next: a video from another Mac (the Swift app fetches a copy), pages in the
-  review window and the pane (`file.htmlpreview`).
+- Another Mac’s files stay there over Convex in both apps today
+  (`RemoteFiles.swift`); the older direct-link video-copy note no longer
+  describes that route. GPUI’s direct runner connections remain unported.
+  Local pages in the review window and pane are now ported (`file.htmlpreview`).
 - Files: `desktop/gpui/native/media_views.m`, `desktop/gpui/build.rs`,
   `desktop/gpui/src/media_view.rs`, `desktop/gpui/src/open_gate.rs`,
   `desktop/gpui/src/files.rs`, `desktop/gpui/src/shell.rs`,
@@ -3534,6 +3768,14 @@ Fixes from Codex's review of the slice before:
 - Verification: the scenarios for each (`@sidebar.sections`, `@reply-buttons`,
   `@composer.textbox`, `@menu.app`, `@card.needsyou`) on Tinker Desk, as each
   slice landed.
+### 2026-11-14 Run on the card taken out (`cards.run`)
+
+- Mike turned the `runAsks` experiment off on 10 Nov and asked on 14 Nov for
+  it to go: the play icon on a reply's shell block (`terminal.putcommand`)
+  is what he wanted. `card_run.rs` (core and app), `Ask.run`, the
+  `cardRuns` dump and its scenario are gone; an ask that still carries
+  `run` from an older runner decodes as before, without it.
+
 ### 2026-11-11 Run on the card (`cards.run`)
 
 - An ask that carries a command (`end_turn`'s `run`, behind the runner's
@@ -4678,3 +4920,199 @@ Fixes from Codex's review of the slice before:
   page reads showed the busy menu and copied both its first and last turns.
 - The old manual Terminal-link gap in reading-a-thread.feature was removed;
   terminal.feature now checks printed and labelled links through the gate.
+
+### 2026-11-13 Highlights task boards
+
+- Highlights draws each project's Notion board under its links. Doing
+  columns come first, then To do and Done; empty columns and an entirely
+  finished board stay out of the pane. Cards assigned to this thread come
+  first within their column, keeping Notion's order among the others.
+- Done starts folded. Four cards show in an open column, with More and
+  Show fewer. Narrow panes scroll sideways with arrows and a draggable
+  bar; wheel scrolling stays vertical and sideways gestures stay on the
+  board. Folded column names are horizontal in the compact strip; Swift
+  rotates them. The full name and count remain in the tooltip.
+- A click mentions the card once at the end of the draft, preserving its
+  words and picture chips. Pending mentions wait for a saved draft to be
+  restored and remain with that draft while an older message is edited.
+  The composer receives focus in the window drawing it; a separate
+  Highlights window does not bring another window to the front.
+- The card menu offers Mention in Message, Open in Notion, Copy Link and,
+  for another known working thread, Open the Thread Working on It. An
+  exact thread id wins; an ambiguous prefix opens no arbitrary thread.
+  Web actions still pass through the open gate.
+- A gesture begun over the board stays with its native scrollers through
+  lift. The window's Back/Forward swipe handler yields before holding those
+  events. The real-screen regression uses window-server gestures in both
+  directions on each axis, with a short window and an overflowing column.
+  It also checks page navigation on the clipped header and after a preview
+  replaces the board, including a preview moved into a floating pane.
+- Sources: `desktop/core/src/board.rs`, `highlights_board.rs`, the composer
+  queue in `composer.rs`, and `features/highlights-board.feature`. The
+  real-backend scenario checks a card reference sent beside a picture
+  through this runner, another Mac and the phone.
+- Verification: 17 focused core tests and 16 real-backend route scenarios;
+  five Mac scenarios with 44 steps, including real window-server gestures
+  under the shared performance lock. Mac pictures also checked the card's
+  menu, the working-thread link, and a draft with its picture and one card
+  mention after two clicks. Cross-lab reviews covered menu propagation,
+  scrolling, ambiguous thread ids and the composer restore/focus paths.
+  After rebasing onto current main, the board and ordinary page-navigation
+  checks passed together: 11 scenarios and 103 steps on Tinker Desk.
+
+### 2026-11-13 A pane row opens only its own menu (`highlights.rowmenus`)
+
+- Right-clicking a pin, file, link or schedule opened its row menu and the
+  enclosing dock panel's menu. The shared row handler now stops that press
+  before the dock handles it. Board cards already do the same.
+- The regression right-clicks the rendered rows and reads every drawn
+  popup menu. Before the fix, a pinned file opened both menus; afterwards
+  it opens one, with its file actions and Remove. All five row-menu
+  scenarios pass, with 39 steps, on the Linux scripted app.
+
+### 2026-11-13 Short tables fit their words and lists have room (`rich.table`, `rich.blocks`)
+
+- Reply tables stop at their measured content width, with wide tables
+  fitting or scrolling inside the available column. List items have the
+  Swift renderer's six-point gap, following the app's zoom.
+- The vendored text style opts in from the app; its defaults are preserved
+  for other text views. Painted-layout tests check a short table at wide,
+  medium and narrow parent widths, the old stretching default, and the
+  difference between list-item gaps.
+- Mac window pictures of wide and narrow replies were inspected alongside
+  the Swift renderer. Cross-lab review found nothing significant.
+- Verification: the two painted-layout tests pass on the Mac, and the two
+  scripted GPUI scenarios pass on cloud (18 steps), measuring painted cells
+  and list lines rather than matching style settings.
+
+### 2026-11-13 PDF and film pictures on link cards (`rich.linkpeek`)
+
+- Local Mac PDF/video links show a bounded first-page/frame raster, shared
+  by reply links and Needs you link buttons. Decode failures keep the file symbol.
+- Pane documents and PDF hovers share one Quick Look job and private descriptor
+  snapshot helper. The pane keeps its 256 MB/1600×1200 limits; hover uses
+  16 MB/552×340 and at most 2 MB of PNG output. Only hover requests time out after five seconds; pane previews keep waiting until completion or view removal.
+- A full file-version stamp joins the asset key to the gate’s checked descriptor.
+  Video decoders forbid external references and retain their descriptor through
+  a late callback. Quick Look retains only its private snapshot until cancellation
+  completes. Other Mac paths are refused before reading local metadata; other
+  systems keep the file symbol.
+- Native regression tests synthesize their own film and PDF, including path
+  replacement, size/output caps, version mismatch and delayed callbacks.
+
+### 2026-11-14 The Mac’s services for selected words (`rich.textservices`)
+
+- AppKit receives a frozen plain-text selection from the focused Input,
+  Textarea or Editor, otherwise the reply’s selected words. Passwords,
+  revealed secret fields and one-time-code fields suppress older reply selections.
+- Look Up uses the public definition popover (also Control-Command-D and
+  a force-pressure hook), Translate the public macOS 14.4+ SwiftUI presentation,
+  and Services/Writing Tools the custom-view AppKit requestor experience.
+  Writing Tools is offered only when macOS says it is available. Share uses
+  the system’s picker. No hidden text editor stands in for these actions.
+- Returns recheck the original window/field/range/text and editability, then
+  make one undoable edit. Reply, picture, multi-cursor and active IME selections
+  are send-only. Late, duplicate or invalid returns cannot overwrite another draft.
+- The window root observes focus and actual selection/document changes;
+  caret blinks do not recopy long selected drafts. Native pages keep their own
+  responder chain and selection. Reply-menu Copy keeps plain text and HTML.
+- Shared selection tests cover Unicode/Undo, stale ranges/text, read-only and
+  expired fields, secrets, extra cursors/pictures and IME clause/preedit boundaries.
+  Native focus specs exercise actual AppKit requestors on private pasteboards.
+- All six Mac scenarios pass (73 steps), including a shortcut regression that
+  fails with the old sibling-overlay routing. Signed GPUI examples show the
+  real Translate, Look Up and Writing Tools popovers. Both simulated and
+  physical Control-Command-D open Look Up; AppKit handles the physical key
+  directly. The native Writing Tools menu and its opened panel were inspected
+  in window captures, without accepting system privacy prompts.
+- A physical trackpad force click has not been tried; its public pressure-stage
+  hook is wired. Other systems omit the Mac services.
+
+### 2026-11-14 Final parity leftovers
+
+- The composer's + menu deliberately keeps folders in the same popover,
+  under Folder, rather than opening Swift's submenu. This follows menu
+  style C: the current folder and the other choices stay visible together.
+- Wait-line tips include the local start and end times and all finished
+  jobs. Sending and queued messages have Swift's tips, and review answers
+  begin with the review icon.
+- Attach images filters supported image types in the Mac's native sheet.
+  On Windows and Linux the kit cannot filter the dialog; nonimage selections
+  are rejected before they can become attachments.
+- Pick a time has a month calendar and a separate time field. A past time
+  leaves the dialog open with its warning inside it.
+- A selected sidebar row dims from 8% to 6% when its window is behind.
+  Increase Contrast reads the Mac's setting at launch and on return to the
+  front, using AppKit's effective accessibility appearance for text, borders
+  and kit controls, with stronger semantic colours for the other look. The scripted app can use `THREADBEAR_INCREASE_CONTRAST=on|off`
+  to compare them without changing the system setting.
+- Provider names, Auto behaviour, effort and rewind follow ProviderInfo
+  where supplied, with the existing rules for fields older runners omit.
+  The relay currently supplies accounts without ProviderInfo, so remote
+  threads use those fallbacks until the runner sends its capabilities.
+  Activity dates fall back through updatedAt and createdAt; seq and count
+  readers accept numeric strings. Unreadable event payloads log their shape
+  without including the payload's private text.
+- Status-word blur and the Activity badge's entrance remain undecided.
+
+### 2026-11-15 Nested threads (`sidebar.nested`, `thread.startedby`)
+
+- Experiment `nestedThreads` (docs/protocol.md, "Nested threads"), GPUI app
+  only; the frozen Swift app shows these threads as before, so both specs are
+  `@swift-pending` there. A thread another thread started sits indented under
+  it in the sidebar, like a sub-agent, one level deep, in the section of the
+  group's most urgent member. The group opens by itself while one of its
+  threads waits on Mike and folds otherwise; the count on the starter's row
+  opens or folds it, remembered while the app runs. Folded, the starter carries
+  the group's needs-you dot. A nested row's second line is its question in
+  orange, else its byline or last reply. Archived ones are one "N finished"
+  line, which opens the starter with Highlights ("Threads it started"). The row
+  menu has Move Out From Under and Put Back Under (`threads.update`'s
+  `detached`, optimistic with rollback). The Projects view nests the same way
+  within a project. A thread a thread started opens with "Started by
+  <starter> · why" above its transcript. Dragging rows in or out waits for a
+  motion mockup (AGENTS.md).
+- Rules and their tests: `desktop/core/src/nested.rs`, `inbox::sections_nested`.
+  Drawing: `desktop/gpui/src/{sidebar,projects_list,thread,app,shell}.rs`.
+  The mock's `TB_MOCK_NESTED` demo set, `features/nested-threads.feature`.
+
+### 2026-11-15 Files open with the app that was checked (`file.open`)
+
+- Daybreak 125: the open gate looked at a file by its path, then handed the
+  path to the system, which looked it up again; whatever writes the project
+  could swap the document (or a folder above it) for an app in between, and
+  it launched with no question. Now each open looks again right before
+  (same real path, same file on disk by device and inode, same kind, same
+  app), and then opens the file it looked at rather than its path. On a Mac
+  that's a file reference URL (`file:///.file/id=<volume>.<inode>`, both
+  checked against the look) handed to the app that was checked
+  (NSWorkspace's openURLs:withApplicationAtURL:); tried on Tinker Desk, an
+  app or script moved into the path after the reference was made never ran,
+  and a confirmed script ran the one asked about. A plain folder is shown
+  selected in Finder rather than opened in a window of its own: a Finder
+  window rooted at a path, or Finder asked to open it, launched an app
+  swapped in there; revealing it didn't. A document package (`.rtfd`,
+  `.xcodeproj`) still opens in its app. The opener is the real app (links
+  followed), handed over by a reference too; one that isn't installed where
+  apps go (directly in `/Applications` or `~/Applications` or their
+  Utilities, the system's folders, `~/Library/Application Support`), as an
+  app in the project made a file's opener by its own "open with" setting
+  would be, means a question first, as a program does. The looked-at file
+  is held open until it opens, so its inode can't pass to a file made in
+  its place. A disk with no file references (ExFAT, a network share) opens
+  a file from a private copy in `~/Library/Caches/Threadbear/opened`, and
+  doesn't open a folder.
+  The Swift app (frozen) still opens by path.
+- Windows and Linux can't name the app or hold a file through the system's
+  opener, so a file (a document, or a program once said yes to) opens from a
+  private, read-only copy of the checked file, read from the handle held
+  since the look (Linux), or one that must be the file looked at (Windows:
+  its volume and file ID),
+  in `~/.cache/threadbear/opened` or `%LOCALAPPDATA%\Threadbear\opened`,
+  cleared after a day. Edits made there don't reach the original. A plain
+  folder still goes to the file manager by its path with a slash on the
+  end, after the look, so only a folder is found there; a bundle folder
+  isn't opened.
+- Rules and their tests: `desktop/core/src/open_policy.rs` (`Opener`,
+  `still_same`, `checked_copy`), the gate: `desktop/gpui/src/open_gate.rs`
+  (`open_checked`), `desktop/core/tests/open_gate_source.rs`.

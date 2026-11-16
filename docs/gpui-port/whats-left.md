@@ -20,8 +20,8 @@ you go.
 - [x] Projects: the Projects page and sidebar view, a project's page, its
   decisions, Projects ▸ in the row and ... menus, the header's project tiles
   opening the page, New Thread in a project (`projects.*`, `header.projectchip`)
-- [x] The Terminal: ⌘J with a shell per thread, Run on an ask with a command,
-  the play icon on a reply's shell block (`terminal.*`, `cards.run`)
+- [x] The Terminal: ⌘J with a shell per thread and the play icon on a
+  reply's shell block (`terminal.*`)
 - [x] Slack, email and draft boxes in replies with Copy, and chips in your
   bubbles: pictures, thread ids and card mentions (`rich.draft`,
   `rich.*chips`, `transcript.user`, `transcript.agentmessage`)
@@ -48,8 +48,8 @@ you go.
 - [x] Selecting text in a reply has no Explain, Quote or Copy bar, and no
   Explain pane (`rich.selectionbar`, `rich.explain`)
 - [x] ⌘C copies plain text only, without the links (`rich.copy`)
-- [ ] Tables stretch to the column's width rather than their natural widths,
-  and list items sit a little closer than Swift's (`rich.table`, `rich.blocks`)
+- [x] Tables stop at their content width, fitting or scrolling inside the
+  available space, and list items have Swift's six-point gap (`rich.table`, `rich.blocks`)
 - [x] File names in replies don't find the files the thread's tools touched,
   and this Mac's documents and pictures open in their app, not the pane
   (`rich.filerefs`, `file.host`)
@@ -83,9 +83,8 @@ you go.
   (`composer.schedulefromsend`). In since 11 Nov
 - [x] The slash palette can't be resized (`composer.slash.resize`). In since
   11 Nov
-- [ ] In a narrow panel (a thread in a panel of its own, a narrow window) the
-  chips under the box run past its edge, where the Swift app's shrink their
-  labels to fit (`composer.modelpicker`, `composer.permission`)
+- [x] In a narrow panel the chips under the box shrink their labels to fit
+  (`composer.modelpicker`, `composer.permission`, `ChipTrigger`).
 - [x] The card: no lab-review findings on it (since 12 Nov they're a row in
   the transcript instead, in both apps), no slide between pages, picks
   don't show as chips while it's collapsed, no pictures in a Something else
@@ -128,12 +127,14 @@ you go.
   pictures, with its note on hover and click (`transcript.user`). Row menus
   have their copy icons, and copying a transcript disables its menu item
   until the older pages arrive (`transcript.rowmenu`).
-- [ ] The offer to continue a refused turn sits at the top, not just above the
-  composer (`banner.refusal`)
+- [x] The offer to continue a refused turn is above the composer
+  (`banner.refusal`, `composer.rs`), as in Swift.
 - [x] The milestone capsule shows at 100 threads and each thousand, once,
   when you are there to see it (`toast.milestone`). Mike chose a static paw
   with no entrance motion or wave.
-- [ ] Highlights: no Notion board (`highlights.board`)
+- [x] Highlights shows each project's Notion board (`highlights.board`),
+  with card mentions and links to the thread working on a card. Done folds
+  away, long columns have More, and the board scrolls sideways.
 - [ ] An image panel has no Open Simulator button; `.app`, `.icns` and PDF
   icons fall back to a symbol (`panel.image`, `patches.icons`,
   `rail.originbadge`)
@@ -146,10 +147,11 @@ you go.
   window list, the sidebar's and Settings' arrow keys and the Updates
   icon's popover are in since 12 Nov (`tour.about`, `menu.edit`,
   `menu.window`, `sidebar.keys`, `updates.popover`)
-- [ ] GPUI's text boxes have no spelling or grammar checks, Substitutions,
-  Look Up, Translate, Writing Tools or Services on selected words: its input
-  isn't an AppKit text view. The Swift app's menu bar has none of these
-  either, but its boxes had them on the right-click menu
+- [x] The Mac's spelling/grammar checks, Substitutions and Speech, with
+  Look Up, Translate, Writing Tools and Services on selected words. The shared
+  selection getter serves both spelling/Speech and the native responder bridge;
+  returned text is checked against the original editable selection. Other
+  systems omit these Mac services (`composer.spelling`, `rich.textservices`).
 - [x] The archive and hibernate flights: the open thread's page drops into
   the Archived heading or sinks into the moon, and the heading's box bounces
   (`juice.archiveflight`, `juice.hibernateflight`). A drawn card with a
@@ -164,24 +166,22 @@ you go.
   bear, the working, waking and sitting bears, the milestone toast's wave),
   a finished row's wash and drawn-on tick, and the unread dot's pop
   (`transcript.sendlift`, `librarian.picture`, `rail.activity`, `card.done`)
-- [ ] The working line's paw moving: he'd rather the paw than the bear, and
-  is picking how it moves from mockups (`transcript.working`)
+- [x] The working line's paw moving, in place of the bear: every 2.4 s it
+  flips, spins, kneads, waves or leaves a few prints, one at random each
+  time, as Mike asked on 13 Nov (`transcript.working`)
 - [ ] A row pressing in while the mouse is down: GPUI can't scale a row
 - [x] The Mac's accent colour is followed, and Reduce Motion is read by the
   kit at launch and again when the app comes back to the front
   (`foundation.theme`, `foundation.reducemotion`).
-- [ ] The switches are smaller than macOS 27's (the Usage helper's note: one
-  fix for Settings, the Librarian page and Usage). Settings' are macOS's now
-  (`mac_switch.rs`: 36 by 16 with a pill knob, as measured in the Swift
-  Settings window); the Librarian page and Usage still have the kit's, and
-  want measuring there first (the Usage helper saw 44 by 20)
+- [x] Settings, the Librarian and Usage use the Mac-sized switches
+  (`mac_switch.rs`); the larger switches outside forms use `outside_form`.
 
 ## Before other people move over
 
 - [x] The app updating itself (`system.selfupdate`)
-- [ ] A seamless restart onto a new build (`system.handover`): the window
-  goes and comes back for now, so the app only restarts by itself while
-  it isn't in front
+- [x] A seamless restart onto a new build (`system.handover`): the incoming
+  app restores the windows and threads before the outgoing app leaves
+  (`handover.rs`).
 - [x] Crash reports to Sentry, and the hang watch (`system.crash`,
   `system.hangwatch`)
 - [x] The activity log (`system.activitylog`, `foundation.tooltips`)

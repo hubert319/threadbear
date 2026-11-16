@@ -16,12 +16,12 @@
 // it as diagrams do, says why when it can't, and offers Open in browser, so
 // the app works without it.
 use crate::app::Threadbear;
-use crate::highlights::{icon, palette, tipped, Palette};
+use crate::highlights::{icon, palette, tipped, tipped_as, Palette};
 use crate::push_button::PushButton;
 use crate::style::{self, px};
 use crate::web_runtime::{self, Engine};
 use futures::StreamExt as _;
-use gpui_kit::component::spinner::Spinner;
+use crate::spinner::Spinner;
 use gpui_kit::component::{h_flex, v_flex, ActiveTheme as _, Sizable as _, WindowExt as _};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -626,7 +626,7 @@ fn open_button(open: &Opener, _p: Palette, cx: &App) -> AnyElement {
 /// A pinned panel's are for its own thread's panel and page.
 pub(crate) fn bar_buttons(app: &Threadbear, panel_id: &str, cx: &mut App) -> Option<AnyElement> {
     let (thread, panel_id, pinned) = match threadbear_core::pinned_panels::pinned(panel_id) {
-        Some((thread, id)) => (app.threads.get(thread)?.clone(), id, true),
+        Some((thread, id)) => ((**app.threads.get(thread)?).clone(), id, true),
         None => (app.pane_thread()?, panel_id, false),
     };
     let panel = thread.panels().into_iter().find(|p| p.id == panel_id && p.kind == "url")?;
@@ -933,7 +933,7 @@ fn convex_header(panels: &Entity<WebPanels>, state_key: &str, configured: &Deplo
     let note = state.and_then(|s| s.note.clone());
     let mut row = h_flex().gap(px(8.)).items_center().min_w_0();
     if let (Some(project), Some(tip)) = (&configured.project, configured.project_tip()) {
-        row = row.child(tipped(div().id("convex-project").flex_none().text_size(px(style::size::LABEL)).font_weight(FontWeight::SEMIBOLD).text_color(p.fg).child(project.clone()), tip));
+        row = row.child(tipped_as(div().id("convex-project").flex_none().text_size(px(style::size::LABEL)).font_weight(FontWeight::SEMIBOLD).text_color(p.fg).child(project.clone()), tip, gpui_kit::Role::GenericContainer));
     }
     let view = native_view(window);
     let (menu_panels, menu_key, menu_configured) = (panels.clone(), state_key.to_owned(), configured.clone());
@@ -961,14 +961,14 @@ fn convex_header(panels: &Entity<WebPanels>, state_key: &str, configured: &Deplo
         });
     }
     row = row.child(tipped(menu, "Choose the deployment shown in this panel"));
-    row = row.child(tipped(div().id("convex-deployment").min_w_0().truncate().font_family(cx.theme().mono_font_family.clone()).text_size(px(style::size::SMALL)).text_color(p.secondary).child(selected.to_owned()), selected.to_owned()));
+    row = row.child(tipped_as(div().id("convex-deployment").min_w_0().truncate().font_family(cx.theme().mono_font_family.clone()).text_size(px(style::size::SMALL)).text_color(p.secondary).child(selected.to_owned()), selected.to_owned(), gpui_kit::Role::GenericContainer));
     row = row.child(div().flex_1());
     if loading {
         row = row.child(Spinner::new().color(p.secondary).with_size(px(10.)));
     }
     let mut header = v_flex().flex_none().gap(px(6.)).px(px(12.)).py(px(8.)).child(row);
     if let Some(note) = note {
-        header = header.child(tipped(div().id("convex-choices-note").text_size(px(style::size::SMALL)).line_height(px(15.)).text_color(p.secondary).line_clamp(2).child(note.clone()), note));
+        header = header.child(tipped_as(div().id("convex-choices-note").text_size(px(style::size::SMALL)).line_height(px(15.)).text_color(p.secondary).line_clamp(2).child(note.clone()), note, gpui_kit::Role::GenericContainer));
     }
     header.into_any_element()
 }
@@ -1363,6 +1363,33 @@ pub(crate) async fn automation(cmd: &Value, cx: &mut AsyncApp) -> Result<Value, 
         other => return Err(format!("do must be eval, click, drop, focus, wait or choose, not {other:?}")),
     }
     Ok(cx.update(|cx| dump_page(&key, cx)))
+}
+
+/// Swift's `convex` command, using the same validated list and selection
+/// model as the deployment menu, even before a page has been made.
+#[cfg(feature = "automation")]
+pub(crate) async fn convex_command(app: &WeakEntity<Threadbear>, cmd: &Value, cx: &mut AsyncApp) -> Result<Value, String> {
+    let (thread, panel, configured, client) = app.read_with(cx, |app, _| {
+        let thread = app.open_thread()?;
+        let panel = thread.panels().into_iter().find(|p| p.convex.is_some())?;
+        Some((thread.id.clone(), panel.id.clone(), panel.convex?, app.client.clone()))
+    }).map_err(|e| e.to_string())?.ok_or("no Convex cloud panel")?;
+    if let Some(deployment) = cmd["deployment"].as_str() {
+        let answer = crate::call(client, "panels.convexDeployments", json!({ "threadId": thread, "panelId": panel })).await.map_err(|e| e.message)?;
+        let listed: convex::Choices = serde_json::from_value(answer).map_err(|e| e.to_string())?;
+        let choices = convex::with_configured(listed.deployments, &configured);
+        if !choices.iter().any(|c| c.deployment == deployment) { return Err("unknown deployment".into()); }
+        cx.update(|cx| {
+            let panels = panels(cx).ok_or("no web panels")?;
+            panels.update(cx, |p, cx| p.select(&configured, deployment, cx));
+            Ok::<_, String>(())
+        })?;
+    }
+    cx.update(|cx| {
+        let panels = panels(cx).ok_or("no web panels")?;
+        let selected = panels.read(cx).selected(&configured);
+        Ok(json!(format!("ok {selected} browser={}", convex::browser_url(&selected).unwrap_or_else(|| "none".into()))))
+    })
 }
 
 #[cfg(feature = "automation")]

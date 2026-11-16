@@ -205,7 +205,7 @@ impl Threadbear {
                         let samples: Vec<ThreadSummary> = v["threads"].as_array().into_iter().flatten().filter_map(|t| serde_json::from_value(t.clone()).ok()).collect();
                         this.tour.samples = samples.iter().map(|t| t.id.clone()).collect();
                         for t in samples {
-                            this.threads.insert(t.id.clone(), t);
+                            this.threads.insert(t.id.clone(), std::sync::Arc::new(t));
                         }
                         // The step on show may want one open or hovered.
                         if this.tour.tour.is_on() && this.tour.tour.intro.is_none() {
@@ -598,7 +598,7 @@ impl Threadbear {
         if let Some(url) = step.doc_url() {
             title_row = title_row.child(
                 div()
-                    .id("tour-docs")
+                    .id("tour-docs").role(Role::Button)
                     .cursor_pointer()
                     .child(crate::icons::symbol("info.circle").with_size(px(14.)).text_color(secondary))
                     .tip("More about this, in the docs")
@@ -618,7 +618,7 @@ impl Threadbear {
         if skippable && task != Some(TourTask::SendFirst) && !is_last {
             buttons = buttons.child(
                 div()
-                    .id("tour-skip")
+                    .id("tour-skip").role(Role::Button)
                     .cursor_pointer()
                     .text_color(secondary)
                     .child("Skip")

@@ -269,7 +269,7 @@ impl Threadbear {
 
     fn anything_catalog(&self) -> Catalog {
         let tabs: Vec<(String, String)> = crate::settings_window::Tab::ALL.iter().map(|t| (t.name().to_owned(), t.title().to_owned())).collect();
-        Catalog::new(self.threads.values(), &self.projects.list, self.anything_pages(), &tabs, &threadbear_core::sidebar::local_now())
+        Catalog::new(self.threads.values().map(|t| &**t), &self.projects.list, self.anything_pages(), &tabs, &threadbear_core::sidebar::local_now())
     }
 
     /// Something picked: the box goes and the thing opens, straight away.
@@ -534,7 +534,7 @@ impl AnythingBox {
         h_flex()
             .id(SharedString::from(format!("anything-row-{}", item.key)))
             .test_support()
-            .aria_label(tip.clone())
+            .role(Role::ListItem).aria_selected(on).aria_label(tip.clone())
             .h(px(ROW_HEIGHT + 4.))
             .px(px(16.))
             .gap(px(10.))

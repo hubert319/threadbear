@@ -206,6 +206,7 @@ pub(crate) enum MenuAction {
     Remove { id: String, title: String },
     /// A picture's right-click, the file's own bytes (`copyImage`).
     CopyPicture,
+    MentionCard { task: threadbear_core::projects::Task, thread_id: String },
     // The folder browser's (`FolderPaneView.menu`).
     OpenFolderRow { key: String, entry: threadbear_core::folders::FolderEntry },
     SortFolder { key: String, sort: threadbear_core::folders::FolderSort },
@@ -240,6 +241,7 @@ pub(crate) struct SidePane {
     pub(crate) highlights: HashMap<String, ThreadHighlights>,
     pub(crate) highlights_unsupported: bool,
     wanted: HashMap<String, u64>,
+    answered: HashMap<String, u64>,
     fetching: HashSet<String>,
     /// Folded headings, for every thread (`collapsedHighlights`).
     pub(crate) collapsed: HashSet<String>,
@@ -256,6 +258,7 @@ pub(crate) struct SidePane {
     /// Asks being ticked, by "<thread>/<seq>/<index>".
     ticking: HashSet<String>,
     pub(crate) projects: HashMap<String, ProjectInfo>,
+    pub(crate) boards: HashMap<String, crate::highlights_board::BoardState>,
     pub(crate) schedules: Vec<Schedule>,
     /// The project whose ⓘ popover is open, and where (`projectWhyShown`).
     pub(crate) project_why: Option<(String, Point<Pixels>)>,
@@ -291,6 +294,7 @@ impl SidePane {
             highlights: HashMap::new(),
             highlights_unsupported: false,
             wanted: HashMap::new(),
+            answered: HashMap::new(),
             fetching: HashSet::new(),
             collapsed: crate::highlights_store::load_collapsed(),
             chosen: HashMap::new(),
@@ -300,6 +304,7 @@ impl SidePane {
             flags: HashMap::new(),
             ticking: HashSet::new(),
             projects: HashMap::new(),
+            boards: HashMap::new(),
             schedules: Vec::new(),
             project_why: None,
             menu: None,
@@ -460,6 +465,7 @@ impl SidePane {
                 cx.background_executor().timer(delay).await;
             }
             let mut fetched = 0;
+            let mut retry_delay = Duration::from_secs(1);
             loop {
                 let Ok(Some(wanted)) = this.update(cx, |t, _| (!t.highlights_unsupported).then(|| t.wanted.get(&id).copied().unwrap_or(0))) else { break };
                 if wanted == fetched {
@@ -468,25 +474,43 @@ impl SidePane {
                 fetched = wanted;
                 let res = call(client.clone(), "threads.highlights", json!({ "threadId": id })).await;
                 let id2 = id.clone();
-                let more = this.update(cx, |t, cx| {
+                let retry = this.update(cx, |t, cx| {
                     match res {
                         Ok(v) => {
                             let fresh = ThreadHighlights::decode(&v);
                             if t.highlights.get(&id2) != Some(&fresh) {
-                                t.highlights.insert(id2, fresh);
-                                cx.notify();
+                                t.highlights.insert(id2.clone(), fresh);
                             }
+                            // Even an unchanged answer can settle a missing
+                            // pin. Errors leave its requested fetch waiting.
+                            t.answered.insert(id2, fetched);
+                            cx.notify();
+                            false
                         }
                         // An older runner: says so in the pane rather than asking again.
                         Err(e) if e.code == -32601 => {
                             t.highlights_unsupported = true;
                             cx.notify();
+                            false
                         }
-                        Err(_) => {}
+                        Err(_) => t.waiting_for_pin(&id2, cx),
                     }
                 });
-                if more.is_err() {
-                    break;
+                let Ok(retry) = retry else { break };
+                if retry {
+                    // A quiet thread has no next event to retry its shown pin.
+                    // Back off, and stop when Mike leaves or the request goes.
+                    cx.background_executor().timer(retry_delay).await;
+                    if !this.update(cx, |t, cx| t.waiting_for_pin(&id, cx)).unwrap_or(false) {
+                        // Still honor a newer ordinary refresh queued while
+                        // waiting, without retrying this failed snapshot.
+                        retry_delay = Duration::from_secs(1);
+                        continue;
+                    }
+                    retry_delay = retry_delay.saturating_mul(2).min(Duration::from_secs(5));
+                    fetched = 0;
+                } else {
+                    retry_delay = Duration::from_secs(1);
                 }
             }
             this.update(cx, |t, _| {
@@ -495,6 +519,28 @@ impl SidePane {
             .ok();
         })
         .detach();
+    }
+
+    pub(crate) fn highlights_wanted(&self, id: &str) -> u64 {
+        self.wanted.get(id).copied().unwrap_or(0)
+    }
+
+    pub(crate) fn highlights_answered(&self, id: &str, target: u64) -> bool {
+        self.highlights_unsupported || self.answered.get(id).is_some_and(|answer| *answer >= target)
+    }
+
+    pub(crate) fn highlights_fetching(&self, id: &str) -> bool {
+        self.fetching.contains(id)
+    }
+
+    fn waiting_for_pin(&self, id: &str, cx: &App) -> bool {
+        let Some(app) = self.app.upgrade() else { return false };
+        let app = app.read(cx);
+        !app.shows_home
+            && crate::thread::is_looking()
+            && app.open_thread().is_some_and(|thread| {
+                thread.id == id && thread.panel_request.as_ref().is_some_and(|request| request.highlight.is_some())
+            })
     }
 
     // MARK: sections
@@ -751,7 +797,7 @@ impl SidePane {
         }
         if let Some(app) = self.app.upgrade() {
             app.update(cx, |t, cx| {
-                if let Some(ask) = t.threads.get_mut(&thread_id).and_then(|t| t.asks.as_mut()).and_then(|a| a.get_mut(index)) {
+                if let Some(ask) = t.threads.get_mut(&thread_id).map(std::sync::Arc::make_mut).and_then(|t| t.asks.as_mut()).and_then(|a| a.get_mut(index)) {
                     ask.ticked = Some(ticked);
                 }
                 cx.notify();
@@ -766,7 +812,7 @@ impl SidePane {
                 if let Err(e) = res {
                     if let Some(app) = t.app.upgrade() {
                         app.update(cx, |app, cx| {
-                            if let Some(ask) = app.threads.get_mut(&thread_id).and_then(|t| t.asks.as_mut()).and_then(|a| a.get_mut(index)) {
+                            if let Some(ask) = app.threads.get_mut(&thread_id).map(std::sync::Arc::make_mut).and_then(|t| t.asks.as_mut()).and_then(|a| a.get_mut(index)) {
                                 ask.ticked = Some(!ticked);
                             }
                             cx.notify();
@@ -793,6 +839,7 @@ impl SidePane {
                 }
             }
             MenuAction::Reveal { path } => crate::files::reveal(&path, if thread.is_remote() { crate::open_gate::Origin::OtherMac } else { crate::open_gate::Origin::ThisMac }, cx),
+            MenuAction::MentionCard { task, thread_id } => self.mention_board_card(&task, &thread_id, window, cx),
             MenuAction::Copy { text } => cx.write_to_clipboard(ClipboardItem::new_string(text)),
             MenuAction::Remove { id, title } => self.remove_highlight(id, title, thread.id.clone(), cx),
             MenuAction::EditSchedule { id } => self.edit_schedule(&id, window, cx),
@@ -986,11 +1033,19 @@ pub(crate) fn icon(name: &str, size: f32, color: Hsla) -> Icon {
     icons::try_symbol(name).unwrap_or_else(|| Icon::new(gpui_kit::assets::IconName::SquareDashed)).with_size(px(size)).text_color(color)
 }
 
-/// A control's tooltip and the label scripts find it by, as Swift's `.tip`.
+/// A control's tooltip and the label scripts find it by, as Swift's `.tip`:
+/// a button to VoiceOver. Anything else uses `tipped_as` with its own role.
 pub(crate) fn tipped(el: Stateful<Div>, tip: impl Into<SharedString>) -> gpui_kit::base::ObservedElement<Stateful<Div>> {
+    tipped_as(el, tip, Role::Button)
+}
+
+/// `tipped` for what isn't a button: `Role::Image` for an icon that only
+/// explains, `Role::GenericContainer` for words or a holder round a kit
+/// control (no node of its own, so VoiceOver reads what's inside).
+pub(crate) fn tipped_as(el: Stateful<Div>, tip: impl Into<SharedString>, role: Role) -> gpui_kit::base::ObservedElement<Stateful<Div>> {
     let text: SharedString = tip.into();
     let shown = text.clone();
-    el.test_support().aria_label(text).tip(shown)
+    crate::a11y::A11yRole::a11y_role(el.test_support(), role).aria_label(text).tip(shown)
 }
 
 /// One row in the pane's lists (`PaneRow`): a grey icon, the title with a word
@@ -1160,12 +1215,17 @@ impl PaneRow {
         if let Some(tip) = self.tip {
             wrapper = wrapper.tip(tip.clone());
         }
-        let mut wrapper = wrapper.test_support().aria_label(SharedString::from(self.title));
+        let mut wrapper = wrapper.test_support().role(Role::ListItem).aria_label(SharedString::from(self.title));
         if let Some(click) = self.on_click {
             wrapper = wrapper.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| (click)(this, window, cx)));
         }
         if let Some(menu) = self.on_menu {
-            wrapper = wrapper.on_mouse_down(MouseButton::Right, cx.listener(move |this, ev: &MouseDownEvent, window, cx| (menu)(this, ev.position, window, cx)));
+            wrapper = wrapper.on_mouse_down(MouseButton::Right, cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
+                // A row's own menu takes the press before the dock's panel
+                // menu sees it. This covers links, files, pins and schedules.
+                cx.stop_propagation();
+                (menu)(this, ev.position, window, cx);
+            }));
         }
         crate::file_drag::FileDragExt::file_drag(wrapper, self.drag)
     }
@@ -1223,7 +1283,7 @@ impl SidePane {
         self.collapsed.contains(key)
     }
 
-    fn project_block(&mut self, row: &ProjectRow, p: Palette, cx: &mut Context<Self>) -> AnyElement {
+    fn project_block(&mut self, row: &ProjectRow, thread: &ThreadSummary, p: Palette, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let key = fold::project(&row.project.id);
         let folded = self.is_folded(&key);
         let count = row.project.links.len() + row.project.open_task_count();
@@ -1245,6 +1305,9 @@ impl SidePane {
                     pr = pr.detail(Some(address));
                 }
                 list = list.child(pr.render(p, cx));
+            }
+            if let Some(tasks) = row.project.tasks.as_ref().and_then(threadbear_core::projects::Tasks::decode) {
+                list = list.child(self.task_board(&project_id, &tasks, thread, p, window, cx));
             }
         }
         list.into_any_element()
@@ -1288,14 +1351,13 @@ impl SidePane {
             return crate::files::pane_note("This runner doesn't keep highlights yet.", p).into_any_element();
         }
         // The first fetch is quick; a spinner would only flash.
-        let Some(fetched) = self.highlights.get(&thread.id).cloned() else { return div().size_full().into_any_element() };
-        let sections = HighlightSections::build(&fetched);
+        let Some(sections) = self.highlights.get(&thread.id).map(HighlightSections::build) else { return div().size_full().into_any_element() };
         let projects = core::project_rows(thread, |id| self.projects.get(id).cloned());
         let scheduled = self.schedule_rows(thread, cx);
         let clock = side::local_now();
         let now = now_ms();
         let started = match self.app.upgrade() {
-            Some(app) => core::started_rows(thread, app.read(cx).threads.values(), now),
+            Some(app) => core::started_rows(thread, app.read(cx).threads.values().map(|t| &**t), now),
             None => vec![],
         };
         let subagents = core::subagents_for_highlights(thread);
@@ -1342,7 +1404,7 @@ impl SidePane {
         // The thread's projects, each under its own icon with why it's there
         // behind an ⓘ, then the places Mike keeps going back to for it.
         for row in &projects {
-            list = list.child(self.project_block(row, p, cx));
+            list = list.child(self.project_block(row, thread, p, window, cx));
         }
         if !scheduled.is_empty() {
             let folded = self.is_folded(fold::SCHEDULED);
@@ -1487,13 +1549,16 @@ impl SidePane {
             }
         }
         let _ = window;
-        div().id("highlights-scroll").size_full().overflow_y_scroll().track_scroll(&self.scroll).child(list).into_any_element()
+        div().id("highlights-scroll").size_full().overflow_y_scroll().restrict_scroll_to_axis().track_scroll(&self.scroll).child(list).into_any_element()
     }
 
     pub(crate) fn schedule_rows(&self, thread: &ThreadSummary, cx: &App) -> Vec<core::ScheduleRow> {
-        let threads = self.app.upgrade().map(|a| a.read(cx).threads.clone()).unwrap_or_default();
+        // Read in place: a copy of every thread, made each time the pane
+        // drew, was most of the pane's time in a frame (Mike has 1,400).
+        let app = self.app.upgrade();
+        let threads = app.as_ref().map(|a| &a.read(cx).threads);
         core::schedule_rows(thread, &self.schedules, now_ms(), |s| match s.thread_id.as_deref() {
-            Some(id) => threads.get(id).map_or_else(|| "A thread that's gone".to_owned(), |t| if t.title.is_empty() { "Untitled".to_owned() } else { t.title.clone() }),
+            Some(id) => threads.and_then(|t| t.get(id)).map_or_else(|| "A thread that's gone".to_owned(), |t| if t.title.is_empty() { "Untitled".to_owned() } else { t.title.clone() }),
             None => format!("New thread in {}", threadbear_core::inbox::folder_name(s.cwd.as_deref().unwrap_or(""))),
         })
     }
@@ -1790,7 +1855,7 @@ impl SidePane {
             .filter(|id| self.dock_showing(id, cx))
             .map(|id| json!({ "id": id, "draws": self.drawn.get(&id).cloned().unwrap_or_default() }))
             .collect();
-        let mut out = json!({ "shown": true, "width": PANE_WIDTH as i64, "items": items, "preview": preview, "highlights": self.highlights_line(&thread.id), "pane": self.pane_dump(&thread, &section, cx), "drawn": drawn });
+        let mut out = json!({ "shown": true, "width": PANE_WIDTH as i64, "items": items, "preview": preview, "highlights": self.highlights_line(&thread.id), "fetchingHighlights": self.fetching.contains(&thread.id), "pane": self.pane_dump(&thread, &section, cx), "drawn": drawn });
         // The Browser pane's pages while it's on show, wherever it is, as
         // sections now draw side by side whichever one was last chosen.
         if self.dock_showing(BROWSER, cx) {
@@ -1870,8 +1935,11 @@ impl SidePane {
         let projects = core::project_rows(thread, |id| self.projects.get(id).cloned());
         let scheduled = self.schedule_rows(thread, cx);
         let (clock, now) = (side::local_now(), now_ms());
-        let threads = self.app.upgrade().map(|a| a.read(cx).threads.clone()).unwrap_or_default();
-        let started = core::started_rows(thread, threads.values(), now);
+        let app = self.app.upgrade();
+        let started = match &app {
+            Some(app) => core::started_rows(thread, app.read(cx).threads.values().map(|t| &**t), now),
+            None => vec![],
+        };
         let subagents = core::subagents_for_highlights(thread);
         let asks = thread.asks.clone().unwrap_or_default();
         let tools: HashSet<String> = thread.patches().into_iter().filter(|p| !p.matched.clone().unwrap_or_default().is_empty()).map(|p| p.id).collect();

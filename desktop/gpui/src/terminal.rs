@@ -84,6 +84,13 @@ fn terminals(cx: &App) -> Option<Entity<Terminals>> {
     cx.try_global::<TerminalsGlobal>().map(|g| g.0.clone())
 }
 
+/// The Terminal draws its own text rather than using a kit input. Its
+/// keyboard focus must suppress an older reply selection in text services.
+/// This only reads existing focus handles; it never starts a shell.
+pub(crate) fn has_focus(window: &Window, cx: &App) -> bool {
+    terminals(cx).is_some_and(|terminals| terminals.read(cx).sessions.values().any(|session| session.read(cx).focus.is_focused(window)))
+}
+
 /// Whether any shell has something an update's restart would lose, as
 /// quitting ends every shell: a program running in it, or words at its
 /// prompt (core's `holds_a_restart`). Asked once a second (app_update.rs).
@@ -193,7 +200,7 @@ pub(crate) fn thread_deleted(id: &str, cx: &mut App) {
 /// The runner's whole list came back (on connecting): a shell whose thread
 /// isn't in it was deleted while the app wasn't listening, and one whose
 /// thread is archived there goes too (`stopAll(except:)`, `stopArchived`).
-pub(crate) fn list_loaded(threads: &HashMap<String, threadbear_core::inbox::ThreadSummary>, cx: &mut App) {
+pub(crate) fn list_loaded(threads: &HashMap<String, std::sync::Arc<threadbear_core::inbox::ThreadSummary>>, cx: &mut App) {
     let Some(terminals) = terminals(cx) else { return };
     let keys: Vec<TerminalKey> = terminals.read(cx).sessions.keys().cloned().collect();
     let keeping: HashSet<&str> = threads.keys().map(String::as_str).collect();
@@ -422,7 +429,7 @@ impl Render for Terminals {
         let mut panel = v_flex().id("terminal-panel").size_full();
         if let Some(note) = target.note.clone() {
             // Over the terminal, when its folder isn't the thread's.
-            panel = panel.child(crate::highlights::tipped(
+            panel = panel.child(crate::highlights::tipped_as(
                 div()
                     .id("terminal-note")
                     .flex_none()
@@ -434,7 +441,7 @@ impl Render for Terminals {
                     .text_color(style::secondary_text(cx))
                     .line_clamp(2)
                     .child(note.clone()),
-                note,
+                note, gpui_kit::Role::GenericContainer,
             ));
         }
         let body = match session {
@@ -446,7 +453,7 @@ impl Render for Terminals {
                 // Its tip is what a spec presses it by, as in the Swift app.
                 let tip = format!("Start your login shell in {folder}");
                 let start = div()
-                    .id("terminal-start")
+                    .id("terminal-start").role(Role::Button)
                     .flex_1()
                     .min_h_0()
                     .w_full()

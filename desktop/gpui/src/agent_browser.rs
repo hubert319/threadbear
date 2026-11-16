@@ -13,12 +13,13 @@
 // hand over an agent's tab already on that page (`handoff`), so the agent's
 // waiting tab comes to him instead of a second one opening in his browser
 // (the Qantas sign-in, 30 Oct). open_gate.rs calls it.
-use crate::highlights::{icon, palette, tipped, SidePane};
+use crate::highlights::{icon, palette, tipped_as, SidePane};
 use crate::push_button::PushButton;
 use crate::style::{self, px};
 use futures::channel::oneshot;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::{h_flex, spinner::Spinner, v_flex, Sizable as _};
+use crate::spinner::Spinner;
+use gpui_kit::component::{h_flex, v_flex, Sizable as _};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use serde_json::{json, Value};
@@ -735,7 +736,7 @@ impl SidePane {
         let (w, h) = (STILL_WIDTH, STILL_WIDTH * 0.62);
         let picture = div().flex_none().w(px(w)).h(px(h)).rounded(px(5.)).overflow_hidden().bg(style::primary_opacity(cx, 0.06)).flex().items_center().justify_center();
         let picture = match still {
-            Some(still) => tipped(picture.id(SharedString::from(format!("browser-still-{}", tab.id()))).child(img(ImageSource::Image(still.image)).size_full().object_fit(ObjectFit::Cover)), still_tip(still.at)).into_any_element(),
+            Some(still) => tipped_as(picture.id(SharedString::from(format!("browser-still-{}", tab.id()))).child(img(ImageSource::Image(still.image)).size_full().object_fit(ObjectFit::Cover)), still_tip(still.at), gpui_kit::Role::Image).into_any_element(),
             None => picture.child(icon("globe", 16., p.faint)).into_any_element(),
         };
         let mut words = v_flex().flex_1().min_w_0().gap(px(3.)).child(

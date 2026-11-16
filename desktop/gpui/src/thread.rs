@@ -373,12 +373,65 @@ impl ThreadPane {
         (self.loaded, self.subagent_missing, self.load_failed.clone(), self.feed.model().rows().len())
     }
 
+    /// "Started by GPUI Port Coordinator · building the Browser pane": one
+    /// quiet line above the transcript of a thread another thread started
+    /// (the nestedThreads experiment), the starter's title a link to it.
+    /// Plain words, no label over it, as Mike's UI rules ask.
+    fn render_started_strip(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        // `tipped!` calls `test_support`, which this trait gives.
+        use crate::sidebar::tipped;
+        use gpui_kit::base::TestSupportExt as _;
+        use gpui_kit::component::StyledExt as _;
+        if self.subagent_id.is_some() {
+            return None;
+        }
+        let app = self.app.upgrade()?;
+        let line = app.read(cx).started_line(&self.summary)?;
+        let secondary = crate::style::secondary_text(cx);
+        let title: AnyElement = match line.thread_id.clone() {
+            Some(id) => tipped!(div().cursor_pointer().font_medium().hover(move |s| s.underline().text_decoration_color(secondary)), ElementId::Name(format!("started-by-{id}").into()), format!("Open {}", line.title))
+                .child(line.title.clone())
+                .on_click(move |_, window, cx| {
+                    let id = id.clone();
+                    app.update(cx, |a, cx| a.open(id, window, cx));
+                })
+                .into_any_element(),
+            None => div().child(line.title.clone()).into_any_element(),
+        };
+        Some(
+            gpui_kit::component::h_flex()
+                .flex_none()
+                .min_w_0()
+                .px_7()
+                .pt(px(8.))
+                .pb(px(2.))
+                .gap(px(4.))
+                .text_size(px(12.))
+                .text_color(secondary)
+                .child(div().flex_none().child("Started by"))
+                .child(title)
+                .when_some(line.why.clone(), |s, why| s.child(div().min_w_0().truncate().child(format!("\u{b7} {why}"))))
+                .into_any_element(),
+        )
+    }
+
+    pub(crate) fn can_rewind(&self, cx: &App) -> bool {
+        let fallback = || threadbear_core::composer::can_rewind(&self.summary.provider);
+        let Some(app) = self.app.upgrade() else { return fallback() };
+        let app = app.read(cx);
+        let logins = match self.summary.runner_id.as_deref() {
+            Some(runner) => app.remote.logins.get(runner),
+            None => Some(&app.logins),
+        };
+        logins.map_or_else(fallback, |l| l.can_rewind(&self.summary.provider))
+    }
+
     /// The pencil by one of Mike's messages (`editMessage`): its words and
     /// pictures go into the composer, and sending replaces it.
     pub(crate) fn edit_message(&mut self, row_id: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(row) = self.feed.model().item(row_id).cloned() else { return };
         let RowContent::User(message) = &row.content else { return };
-        if !message.editable || !threadbear_core::composer::can_rewind(&self.summary.provider) {
+        if !message.editable || !self.can_rewind(cx) {
             return;
         }
         let (seq, text, images) = (row.seq, message.text.clone(), message.images.clone());
@@ -977,7 +1030,9 @@ impl ThreadPane {
         self.show_outbox(cx);
         self.scroller.update(cx, |s, cx| s.scroll_to_end(cx));
 
-        let mut params = json!({ "threadId": thread_id, "text": text });
+        // The runner it's shown on (null for this Mac's), so this Mac's
+        // runner refuses it rather than passing it to any other (Daybreak 113).
+        let mut params = json!({ "threadId": thread_id, "text": text, "runnerId": self.summary.runner_id });
         if !images.is_empty() {
             params["images"] = json!(images.iter().map(crate::composer::image_ref_json).collect::<Vec<_>>());
         }
@@ -1195,6 +1250,31 @@ impl ThreadPane {
         }
     }
 
+    /// Its first page is in (a handover waits for the open thread's).
+    pub(crate) fn is_loaded(&self) -> bool {
+        self.loaded
+    }
+
+    /// Still bringing older pages in to get back to a remembered place.
+    pub(crate) fn restoring_place(&self) -> bool {
+        self.rows.pending_restore.is_some()
+    }
+
+    /// Where the outgoing app had this thread scrolled to as it handed over.
+    pub(crate) fn take_handed_memory(&mut self, memory: crate::rows::ScrollMemory, cx: &mut Context<Self>) {
+        if !self.loaded {
+            return;
+        }
+        // The place it was still paging back to is the old one now
+        // (Codex's second look).
+        self.rows.pending_restore = None;
+        if memory.pinned {
+            self.scroller.update(cx, |s, cx| s.scroll_to_end(cx));
+        } else {
+            self.restore_memory(Some(memory), cx);
+        }
+    }
+
     /// `captureMemory`: pinned to the bottom, or the row at the top of the
     /// view and how far down it the view starts (a row part scrolled off the
     /// top has a negative offset, as the Swift app measures it).
@@ -1394,7 +1474,7 @@ impl ThreadPane {
 
     /// A work link in a reply: opens the step's group, scrolls to the step and
     /// lights it up for a moment (`openThreadLink`).
-    pub(crate) fn open_work_link(&mut self, quote: &str, row_id: &str, _window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn open_work_link(&mut self, quote: &str, row_id: &str, window: &mut Window, cx: &mut Context<Self>) {
         let model = self.feed.model();
         // A link with no step behind it beeps, as the Swift app's does, so
         // the click doesn't look as if it was missed.
@@ -1408,8 +1488,17 @@ impl ThreadPane {
                 self.apply(change, cx);
             }
         }
+        // A third of the way down the view, not at its very top, so what led
+        // up to the step is in sight too (`openThreadLink`).
         if let Some(index) = self.feed.model().index_of(&step) {
             self.scroller.update(cx, |s, cx| s.scroll_to_row(index, px(0.), cx));
+            let scroller = self.scroller.clone();
+            window.on_next_frame(move |_, cx| {
+                scroller.update(cx, |s, cx| {
+                    let down = s.viewport().size.height / 3.;
+                    s.back_up(down, cx);
+                });
+            });
             self.light_row(step, cx);
         }
     }
@@ -1511,7 +1600,12 @@ impl ThreadPane {
                 out
             })
             .collect();
-        json!({ "threadId": self.summary.id, "state": self.load_state(), "error": self.error, "atBottom": scroller.at_bottom(), "hasMoreAbove": self.has_more_above(), "spinner": !self.loaded && self.error.is_none() && self.load_failed.is_none(), "timing": self.timing_json(), "rows": rows })
+        // The done card's loose ends as the summary has them and as the
+        // transcript took them, by the card's seq and count: which of the
+        // two lost them, when a card shows none (the nightly parity run).
+        let ends = |c: Option<&threadbear_core::reducer::LooseEnds>| c.map(|c| json!({ "seq": c.seq, "count": c.ends.len() }));
+        let loose_ends = json!({ "summary": ends(self.summary.loose_ends_check().as_ref()), "transcript": ends(self.feed.model().loose_ends()) });
+        json!({ "threadId": self.summary.id, "state": self.load_state(), "error": self.error, "atBottom": scroller.at_bottom(), "hasMoreAbove": self.has_more_above(), "spinner": !self.loaded && self.error.is_none() && self.load_failed.is_none(), "timing": self.timing_json(), "looseEnds": loose_ends, "rows": rows })
     }
 
     /// The Swift dump's names, a failure with its message.
@@ -1662,15 +1756,25 @@ impl Render for ThreadPane {
                 })
                 .drag_over::<ExternalPaths>(|s, _, _, cx| s.bg(crate::style::accent(cx).opacity(0.06)).border_2().border_color(crate::style::accent(cx)))
                 // A thread from the sidebar goes into the message as its chip.
-                .on_drop(move |drag: &crate::composer_inline::DraggedThread, window, cx| thread_drop.update(cx, |c, cx| c.take_thread_drop(drag, window, cx)))
+                .on_drop(move |drag: &crate::composer_inline::DraggedThread, window, cx| {
+                    let at = window.mouse_position();
+                    thread_drop.update(cx, |c, cx| c.take_thread_drop(drag, at, window, cx));
+                })
                 .drag_over::<crate::composer_inline::DraggedThread>(|s, _, _, cx| s.bg(crate::style::accent(cx).opacity(0.06)).border_2().border_color(crate::style::accent(cx)))
                 // A file or picture dragged from inside the app (file_drag.rs)
-                // is a dropped file too: GPUI only hands the system its drag
-                // once it's out of the window.
+                // is a dropped file too, but only let go over a box: one let
+                // go anywhere else over the thread is a drag out that changed
+                // its mind, and shouldn't land in the message (`takesDropFromThread`
+                // turns this app's own drags away; the box still takes them).
+                // GPUI only hands the system its drag once it's out of the window.
                 .on_drop(move |file: &crate::file_drag::DraggedFile, window, cx| {
                     let Some(real) = file.still_grabbed() else { return };
                     let at = window.mouse_position();
-                    file_drop.update(cx, |c, cx| c.take_dropped_paths(vec![real], at, window, cx));
+                    file_drop.update(cx, |c, cx| {
+                        if c.box_under(at, cx).is_some() {
+                            c.take_dropped_paths(vec![real], at, window, cx);
+                        }
+                    });
                 })
                 .drag_over::<crate::file_drag::DraggedFile>(|s, _, _, cx| s.bg(crate::style::accent(cx).opacity(0.06)).border_2().border_color(crate::style::accent(cx)))
         });
@@ -1733,6 +1837,8 @@ impl Render for ThreadPane {
             // the pointer never lands in a click (reply_links.rs).
             .child(crate::reply_links::watch())
             .when_some(self.error.clone(), |s, e| s.child(div().px_7().py_1().text_sm().text_color(danger).child(e)))
+            // Which thread started it, above the transcript (nested threads).
+            .children(self.render_started_strip(cx))
             .map(|s| match self.load_failed.clone() {
                 // No record of it is a plain note, not something that failed.
                 Some(message) if !self.loaded && self.subagent_missing => s.child(div().flex_1().flex().items_center().justify_center().text_size(px(13.)).text_color(muted).child(message)),
@@ -1747,7 +1853,7 @@ impl Render for ThreadPane {
                         // will be, and no words, from the moment it's opened
                         // (DetailView's `ProgressView().controlSize(.small)`
                         // over the transcript while `.loading`).
-                        .when(loading, |s| s.child(div().absolute().inset_0().flex().items_center().justify_center().child(self.spinner(16., cx))))
+                        .when(loading, |s| s.child(div().absolute().inset_0().flex().items_center().justify_center().child(self.spinner(16., cx).transcript_loader())))
                         // Where an archive's page starts from (archive_flight.rs); a sub-agent's never flies.
                         .when(self.subagent_id.is_none(), |s| s.child(crate::archive_flight::transcript_mark(cx.entity_id()))),
                     entering,

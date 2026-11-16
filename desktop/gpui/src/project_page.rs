@@ -10,7 +10,7 @@ use crate::sidebar::{MenuAction, MenuRow};
 use crate::style::{self, px};
 use crate::{icons, now_ms};
 use gpui_kit::component::input::{Input, Textarea};
-use gpui_kit::component::spinner::Spinner;
+use crate::spinner::Spinner;
 use gpui_kit::component::{h_flex, v_flex, ActiveTheme as _, Sizable as _, StyledExt as _};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -27,7 +27,7 @@ impl Threadbear {
     /// The open project's page, or nothing if it's gone.
     pub(crate) fn render_project_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(project) = self.open_project().cloned() else { return div().into_any_element() };
-        let threads: Vec<ThreadSummary> = rules::threads_in(&project.id, self.threads.values()).into_iter().cloned().collect();
+        let threads: Vec<ThreadSummary> = rules::threads_in(&project.id, self.threads.values().map(|t| &**t)).into_iter().cloned().collect();
         let header = self.render_page_header(&project, threads.len(), window, cx);
         let mut column = v_flex().w_full().gap(px(30.)).child(header);
         // The projectDecisions experiment: the page is in two tabs, its
@@ -204,7 +204,7 @@ impl Threadbear {
                     cx.stop_propagation();
                 }
             }))
-            .child(crate::highlights::tipped(div().id("project-title"), "The project's name").child(Input::new(&title).appearance(false).pl(px(0.)).h(px(27.)).text_size(px(24.)).font_semibold()));
+            .child(crate::highlights::tipped_as(div().id("project-title"), "The project's name", gpui_kit::Role::GenericContainer).child(Input::new(&title).appearance(false).pl(px(0.)).h(px(27.)).text_size(px(24.)).font_semibold()));
         h_flex()
             .w_full()
             .items_center()
@@ -252,7 +252,7 @@ impl Threadbear {
     fn render_parts_section(&mut self, project: &Project, cx: &mut Context<Self>) -> Option<AnyElement> {
         let decisions_on = self.project_decisions_on();
         let parts: Vec<(Project, usize, usize)> = {
-            let sections = Sections::build(&self.projects.list, self.threads.values(), now_ms());
+            let sections = Sections::build(&self.projects.list, self.threads.values().map(|t| &**t), now_ms());
             sections.parts_of(&project.id).iter().map(|s: &&Section| (s.project.clone(), s.threads.len(), if decisions_on { rules::decision_count(&s.threads) } else { 0 })).collect()
         };
         if parts.is_empty() {
@@ -354,7 +354,7 @@ impl Threadbear {
         } else if text.trim().is_empty() {
             section = section.child(
                 div()
-                    .id(SharedString::from(format!("empty-{}", field.title())))
+                    .id(SharedString::from(format!("empty-{}", field.title()))).role(Role::Button)
                     .text_size(px(style::size::LABEL))
                     .line_height(px(16.))
                     .text_color(style::faint_text(cx))
@@ -470,7 +470,7 @@ impl Threadbear {
     /// click opens it in Notion; the thread's chip opens the thread.
     fn render_task_card(&mut self, task: &Task, done: bool, n: usize, cx: &mut Context<Self>) -> AnyElement {
         let faint = style::faint_text(cx);
-        let thread = task.thread.as_deref().map(str::to_lowercase).filter(|t| t.chars().count() >= 6).and_then(|t| self.threads.get(&t).or_else(|| self.threads.values().find(|x| x.id.starts_with(&t))).cloned());
+        let thread = task.thread.as_deref().map(str::to_lowercase).filter(|t| t.chars().count() >= 6).and_then(|t| self.threads.get(&t).map(|t| &**t).or_else(|| self.threads.values().map(|t| &**t).find(|x| x.id.starts_with(&t))).cloned());
         let mut meta = h_flex().flex_wrap().gap(px(6.)).items_center().text_size(px(style::size::SMALL)).line_height(px(14.)).text_color(faint);
         let has_meta = !task.who.is_empty() || task.due.is_some() || thread.is_some();
         if !task.who.is_empty() {
@@ -743,7 +743,7 @@ pub(crate) fn small_push_button(id: impl Into<ElementId>, label: &'static str, t
     let color = style::label_text(cx);
     let ink = if cx.theme().is_dark() { 1. } else { 0. };
     crate::highlights::tipped(
-        div().id(id).flex_none().h(px(19.)).px(px(9.)).rounded(px(4.)).flex().items_center().text_size(px(11.)).line_height(px(14.)).text_color(color).bg(hsla(0., 0., ink, 0.08)).active(move |s| s.bg(hsla(0., 0., ink, 0.16))).on_click(on_click).child(label),
+        div().id(id).role(Role::Button).flex_none().h(px(19.)).px(px(9.)).rounded(px(4.)).flex().items_center().text_size(px(11.)).line_height(px(14.)).text_color(color).bg(hsla(0., 0., ink, 0.08)).active(move |s| s.bg(hsla(0., 0., ink, 0.16))).on_click(on_click).child(label),
         tip,
     )
     .into_any_element()
@@ -756,7 +756,7 @@ fn large_push_button(id: &'static str, symbol: &'static str, label: &'static str
     let ink = if cx.theme().is_dark() { 1. } else { 0. };
     crate::highlights::tipped(
         div()
-            .id(id)
+            .id(id).role(Role::Button)
             .flex_none()
             .h(px(28.))
             .px(px(14.))
@@ -779,7 +779,7 @@ fn large_push_button(id: &'static str, symbol: &'static str, label: &'static str
 }
 
 /// Notion's colour names (`TaskColors`), for a column's dot.
-fn task_color(column: &TaskColumn, cx: &App) -> Hsla {
+pub(crate) fn task_color(column: &TaskColumn, cx: &App) -> Hsla {
     let rgb = |r: f32, g: f32, b: f32| Hsla::from(Rgba { r, g, b, a: 1. });
     match column.color.as_deref() {
         Some("blue") => rgb(0.04, 0.52, 1.),

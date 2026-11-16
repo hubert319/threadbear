@@ -15,8 +15,8 @@ use crate::open_gate::Origin;
 use crate::style::{self, px};
 use crate::{call, now_ms};
 use gpui_kit::component::input::{InputEvent, TextareaState};
-use gpui_kit::component::spinner::Spinner;
-use gpui_kit::component::{h_flex, v_flex, ActiveTheme as _, Sizable as _, StyledExt as _};
+use crate::spinner::Spinner;
+use gpui_kit::component::{h_flex, v_flex, Sizable as _, StyledExt as _};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use serde_json::{json, Value};
@@ -55,7 +55,7 @@ pub(crate) struct DecisionCard {
     /// The boxes under "Something else", by ask.
     inputs: HashMap<usize, Entity<TextareaState>>,
     subs: Vec<Subscription>,
-    style: Option<((bool, u32), gpui_kit::base::TextViewStyle)>,
+    style: Option<(crate::style::ReadingStyleKey, gpui_kit::base::TextViewStyle)>,
 }
 
 impl DecisionCard {
@@ -158,14 +158,8 @@ impl AskHost for DecisionCard {
         self.place.clone()
     }
 
-    /// Run on an ask with a command (card_run.rs): through the app's runner,
-    /// as its answers go (`send_decision`).
-    fn ask_run_target(&self, _cx: &App) -> Option<crate::card_run::RunTarget> {
-        Some(crate::card_run::RunTarget { client: None, thread: self.thread.clone(), app: self.app.clone() })
-    }
-
     fn ask_reading_style(&mut self, cx: &App) -> gpui_kit::base::TextViewStyle {
-        let key = (cx.theme().is_dark(), style::zoom_percent());
+        let key = crate::style::reading_style_key(cx);
         match &self.style {
             Some((k, style)) if *k == key => style.clone(),
             _ => {
@@ -229,7 +223,7 @@ impl AskHost for DecisionCard {
         let input = cx.new(|cx| TextareaState::new(window, cx).placeholder("Say something else…").auto_grow(1, 8).submit_on_enter(true));
         // Its words are only here until they're sent, what was typed before
         // too: an update's restart waits for them (unsent.rs).
-        crate::unsent::watch(&input, cx);
+        crate::unsent::watch(&input, "a decision's Something else box on a project's page", cx);
         if !existing.is_empty() {
             input.update(cx, |s, cx| s.set_value(existing, window, cx));
         }
@@ -260,7 +254,7 @@ impl Threadbear {
     /// A project's threads (its parts' too) waiting on a card of asks, newest
     /// first, as its page lists them.
     pub(crate) fn decision_threads_for(&self, project_id: &str) -> Vec<ThreadSummary> {
-        let sections = Sections::build(&self.projects.list, self.threads.values(), now_ms());
+        let sections = Sections::build(&self.projects.list, self.threads.values().map(|t| &**t), now_ms());
         let Some(section) = sections.section(project_id) else { return Vec::new() };
         rules::decision_threads(&sections.threads_with_parts(section)).into_iter().cloned().collect()
     }
@@ -272,7 +266,7 @@ impl Threadbear {
             return card.clone();
         }
         let threads = &self.threads;
-        self.projects.decision_cards.retain(|id, _| threads.get(id).is_some_and(rules::is_waiting));
+        self.projects.decision_cards.retain(|id, _| threads.get(id).map(|t| &**t).is_some_and(rules::is_waiting));
         let app = cx.entity().downgrade();
         let card = cx.new(|_| DecisionCard::new(app, thread.to_owned()));
         self.projects.decision_cards.insert(thread.to_owned(), card.clone());
@@ -305,7 +299,9 @@ impl Threadbear {
         }
         self.projects.decision_sends.insert(thread.clone(), DecisionSend { asks_seq: seq, answers: words });
         cx.notify();
-        let mut params = json!({ "threadId": thread, "text": text });
+        // The runner it's shown on, as the composer's send says it (thread.rs, Daybreak 113).
+        let runner_id = self.threads.get(&thread).and_then(|t| t.runner_id.clone());
+        let mut params = json!({ "threadId": thread, "text": text, "runnerId": runner_id });
         if !images.is_empty() {
             params["images"] = json!(images.iter().map(crate::composer::image_ref_json).collect::<Vec<_>>());
         }
@@ -411,7 +407,7 @@ impl Threadbear {
                             .child(open),
                     )
                     .when_some(rules::status_line(t), |s, line| {
-                        s.child(crate::highlights::tipped(div().id(SharedString::from(format!("decision-line-{}", t.id))).truncate().text_size(px(style::size::DETAIL)).line_height(px(15.)).text_color(secondary), line.clone()).child(line))
+                        s.child(crate::highlights::tipped_as(div().id(SharedString::from(format!("decision-line-{}", t.id))).truncate().text_size(px(style::size::DETAIL)).line_height(px(15.)).text_color(secondary), line.clone(), gpui_kit::Role::GenericContainer).child(line))
                     })
                     .child(div().w_full().pt(px(2.)).child(asks))
                     .into_any_element()

@@ -40,6 +40,10 @@ When("the app's next version is waiting for a Mac to build it on", async functio
   await this.app.do({ cmd: 'updates', preview: 'waiting' });
 });
 
+When("the app's next version is waiting for main to settle", async function (this: ThreadbearWorld) {
+  await this.app.do({ cmd: 'updates', preview: 'settling' });
+});
+
 When('no Mac is trusted to build the app\'s next version', async function (this: ThreadbearWorld) {
   await this.app.do({ cmd: 'updates', preview: 'no-builder' });
 });
@@ -106,6 +110,24 @@ When('the app comes back from restarting onto its next version on the Scheduled 
   const thread = await this.until(`a thread called "${title}"`, (d) => this.thread(d, title));
   restored.set(title, thread.id);
   await this.app.do({ cmd: 'updates', restore: { mode: 'scheduled', selection: thread.id, front: false } });
+});
+
+// What a restart would save now, then put back as a new launch would
+// (`fresh`: no thread's place remembered, none kept loaded), with the given
+// thread open on the Inbox.
+When('the app comes back from restarting onto its next version with {string} open', async function (this: ThreadbearWorld, title: string) {
+  const thread = await this.until(`a thread called "${title}"`, (d) => this.thread(d, title));
+  const state = JSON.parse(okValue(await this.app.do({ cmd: 'updates', restartState: true })));
+  await this.app.do({ cmd: 'updates', restore: { ...state, mode: 'inbox', selection: thread.id, front: false }, fresh: true });
+  await this.until(`"${title}" open`, (d) => d.selection?.id === thread.id);
+});
+
+When('the app restarts onto its next version with {string} open', function () {
+  throw new Error('Manual: on the installed app, open the thread, then Restart to Update from the app menu, and watch the window stay put showing it');
+});
+
+Then('the window stays on screen showing {string} throughout', function () {
+  throw new Error('Manual: the window never goes or flashes, and comes back on the same thread at the same place');
 });
 
 Then('the sidebar shows the Scheduled list with {string} open', async function (this: ThreadbearWorld, title: string) {

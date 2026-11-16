@@ -479,7 +479,7 @@ fn copy_button(draft: &DraftBlock, base: &str, window: &mut Window, cx: &App) ->
     let icon = if just { crate::icons::tall_checkmark() } else { crate::icons::symbol("doc.on.doc") }.size(px(11.)).text_color(color);
     let draft = draft.clone();
     let button = div()
-        .id(ElementId::Name(format!("draft-copy-{base}").into()))
+        .id(ElementId::Name(format!("draft-copy-{base}").into())).role(Role::Button)
         .relative()
         .flex_none()
         .w(width)
@@ -624,7 +624,7 @@ pub(crate) fn automation(app: &Entity<crate::app::Threadbear>, cmd: &serde_json:
     }
     let index = cmd["index"].as_u64().unwrap_or(0) as usize;
     let Some(button) = buttons.get(index) else { return Err(format!("no draft {index} in {row}: it has {}", buttons.len())) };
-    let at = button.bounds().center();
+    let at = button.visible_bounds().center();
     window.pointer_move(at, None, cx);
     window.pointer_down(at, MouseButton::Left, cx);
     window.pointer_up(at, MouseButton::Left, cx);

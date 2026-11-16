@@ -18,7 +18,7 @@ use crate::style::{self, px};
 use crate::call;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Enter, InputEvent, Paste, TextareaState};
-use gpui_kit::component::spinner::Spinner;
+use crate::spinner::Spinner;
 use gpui_kit::component::{h_flex, v_flex, ActiveTheme as _, Icon, Sizable as _};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -196,7 +196,7 @@ impl Threadbear {
             main: window.window_handle(),
             client: self.client.clone(),
             thread_id: thread_id.to_owned(),
-            cwd: thread.map(|t| t.cwd).unwrap_or_default(),
+            cwd: thread.map(|t| t.cwd.clone()).unwrap_or_default(),
             cache: reviews(cx).drafts.clone(),
         };
         let title: SharedString = review.title.clone().into();

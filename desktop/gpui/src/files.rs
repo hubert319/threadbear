@@ -9,10 +9,12 @@
 // read-only editor, coloured by its highlighter; any text with the find bar
 // over it (file_find.rs). On a Mac a video plays and a PDF shows in the
 // system's own view over the pane (media_view.rs), read from this Mac's own
-// file once the open gate has checked it; on Windows and Linux, and for
-// everything else, the pane says it opens in its app (`file.quicklook`). A
+// file once the open gate has checked it. Office and iWork documents show a
+// read-only Quick Look thumbnail. On Windows and Linux these open in their
+// own app (`file.quicklook`). A
 // local web page shows sealed in the web runtime, its scripts off until Run
 // them (`file.htmlpreview`, `file.runthem`: web_panels.rs `local_page`).
+use crate::spinner::Spinner;
 use crate::file_edit::{FileEdit, SaveFile};
 use crate::file_find::{FindBar, FindNext, FindPrevious};
 use crate::file_watch::FolderWatch;
@@ -22,7 +24,7 @@ use crate::{call, icons, style};
 use gpui_kit::base::{TestSupportExt as _, TextViewState, TextViewStyle};
 use gpui_kit::component::input::{Editor, EditorState};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenu, PopupMenuItem};
-use gpui_kit::component::{h_flex, spinner::Spinner, v_flex, ActiveTheme as _, Selectable, Sizable as _};
+use gpui_kit::component::{h_flex, v_flex, ActiveTheme as _, Selectable, Sizable as _};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 // Shadows gpui's px, so sizes here follow the app's zoom (style.rs).
@@ -108,7 +110,7 @@ pub(crate) struct FilesState {
     known_folders: HashSet<String>,
     /// The pane's own text style, built once per appearance.
     /// Keyed by appearance and zoom, as `rows`' is.
-    reading_style: Option<((bool, u32), TextViewStyle)>,
+    reading_style: Option<(crate::style::ReadingStyleKey, TextViewStyle)>,
     /// How files and folders show, remembered across launches.
     pub(crate) prefs: FilePrefs,
     /// What was last looked for, which the next ⌘F starts with, as AppKit's
@@ -184,7 +186,7 @@ impl LocalPage {
 }
 
 /// Which of the system's views a file in the pane shows in, by its name: a
-/// video or a PDF, on a Mac. None elsewhere, where they open in their app.
+/// video, PDF or document thumbnail, on a Mac. None elsewhere, where they open in their app.
 pub(crate) fn media_kind(path: &str) -> Option<crate::media_view::Kind> {
     use crate::media_view::Kind;
     use threadbear_core::open_policy::Media;
@@ -194,6 +196,7 @@ pub(crate) fn media_kind(path: &str) -> Option<crate::media_view::Kind> {
     threadbear_core::open_policy::media_kind(path).map(|m| match m {
         Media::Video => Kind::PaneVideo,
         Media::Pdf => Kind::PaneDocument,
+        Media::Office => Kind::PaneQuickLook,
     })
 }
 
@@ -440,7 +443,7 @@ impl SidePane {
                     .gap(px(6.))
                     .items_center()
                     .child(div().text_size(px(style::size::SMALL)).text_color(p.secondary).child(words::HAS_SCRIPTS))
-                    .child(crate::highlights::tipped(div().id("hl-page-scripts-why").flex_none().child(crate::highlights::icon("info.circle", 11., p.faint)), words::EXPLANATION))
+                    .child(crate::highlights::tipped_as(div().id("hl-page-scripts-why").flex_none().child(crate::highlights::icon("info.circle", 11., p.faint)), words::EXPLANATION, gpui_kit::Role::Image))
                     .child(div().flex_1())
                     .child(crate::push_button::PushButton::new("hl-page-run", words::RUN_THEM, words::RUN_THEM_TIP).render(cx, run)),
             )
@@ -734,7 +737,7 @@ impl SidePane {
         let showing = if editing { MarkdownView::Markdown } else { MarkdownView::Preview };
         let tip = showing.tip();
         let side = cx.entity().downgrade();
-        let holder = crate::highlights::tipped(div().id("hl-markdown-view").flex_none(), tip);
+        let holder = crate::highlights::tipped_as(div().id("hl-markdown-view").flex_none(), tip, gpui_kit::Role::GenericContainer);
         let menu = ModeLabel::new("hl-markdown-view-label", showing.title(), p).dropdown_menu(move |menu: PopupMenu, _, _| {
             let mut menu = menu;
             for view in MarkdownView::ALL {
@@ -942,7 +945,7 @@ impl SidePane {
                     .into_any_element()
             }
             FileBody::Markdown { doc, .. } => {
-                let key = (cx.theme().is_dark(), crate::style::zoom_percent());
+                let key = crate::style::reading_style_key(cx);
                 let style = match &self.files.reading_style {
                     Some((was, style)) if *was == key => style.clone(),
                     _ => {
@@ -1123,6 +1126,11 @@ impl SidePane {
                         if let Some(why) = crate::media_view::failure_of(&key) {
                             pane.insert("previewKind".into(), json!("note"));
                             pane.insert("previewText".into(), json!(why));
+                        } else if *kind == crate::media_view::Kind::PaneQuickLook {
+                            pane.insert("previewKind".into(), json!("quickLook"));
+                            if let Some(state) = crate::media_view::state_of(&key).filter(|s| !s.loading && s.width > 0. && s.height > 0.) {
+                                pane.insert("previewText".into(), json!(format!("Quick Look thumbnail {}x{}", state.width.round(), state.height.round())));
+                            }
                         } else if *kind == crate::media_view::Kind::PaneDocument {
                             pane.insert("previewKind".into(), json!("pdf"));
                             if let Some(state) = crate::media_view::state_of(&key).filter(|s| !s.loading) {

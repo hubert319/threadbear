@@ -6,6 +6,56 @@
 #import <objc/runtime.h>
 #include <stdbool.h>
 
+static NSArray<NSString *> *attachmentExtensions(void) {
+  return @[@"png", @"jpg", @"jpeg", @"gif", @"webp", @"heic", @"heif", @"tif", @"tiff", @"bmp"];
+}
+
+// A UTType can include more suffixes than media.import accepts. Disable
+// those too, so every selectable file is one the composer can attach.
+@interface TBImagePanelDelegate : NSObject <NSOpenSavePanelDelegate>
+@end
+@implementation TBImagePanelDelegate
+- (BOOL)panel:(id)sender shouldEnableURL:(NSURL *)url {
+  NSNumber *directory;
+  [url getResourceValue:&directory forKey:NSURLIsDirectoryKey error:nil];
+  return directory.boolValue || [attachmentExtensions() containsObject:url.pathExtension.lowercaseString];
+}
+@end
+static char imagePanelDelegateKey;
+
+// This sheet belongs to the composer window, and completes once on Add or
+// Cancel. It never accepts a document that would become a generic file chip.
+void tb_composer_choose_images(void *view, void (*finished)(void *, const char *const *, size_t), void *context) {
+  NSOpenPanel *panel = [NSOpenPanel openPanel];
+  panel.canChooseFiles = YES;
+  panel.canChooseDirectories = NO;
+  panel.allowsMultipleSelection = YES;
+  // Match the image formats media.import can read; SVGs cannot be attached.
+  NSMutableArray<UTType *> *types = [NSMutableArray array];
+  for (NSString *extension in attachmentExtensions()) {
+    UTType *type = [UTType typeWithFilenameExtension:extension];
+    if (type && [type conformsToType:UTTypeImage]) [types addObject:type];
+  }
+  TBImagePanelDelegate *delegate = [TBImagePanelDelegate new];
+  panel.delegate = delegate;
+  // NSOpenPanel's delegate is weak; the panel owns this one for the sheet.
+  objc_setAssociatedObject(panel, &imagePanelDelegateKey, delegate, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  panel.allowedContentTypes = types;
+  panel.allowsOtherFileTypes = NO;
+  panel.prompt = @"Add";
+  void (^complete)(NSModalResponse) = ^(NSModalResponse result) {
+    if (result != NSModalResponseOK) { finished(context, NULL, 0); return; }
+    NSArray<NSURL *> *urls = panel.URLs;
+    const char **names = calloc(urls.count, sizeof(char *));
+    for (NSUInteger i = 0; i < urls.count; i++) names[i] = urls[i].path.UTF8String;
+    finished(context, names, urls.count);
+    free(names);
+  };
+  NSWindow *window = ((__bridge NSView *)view).window;
+  if (window) [panel beginSheetModalForWindow:window completionHandler:complete];
+  else [panel beginWithCompletionHandler:complete];
+}
+
 typedef bool (*TBMediaSink)(void *, int, const char *, const void *, size_t);
 // Only valid during the synchronous sink call. Rust copies these bytes
 // before returning, so a later file-open failure never rereads a pasteboard.
@@ -57,26 +107,33 @@ static bool webURL(NSString *text) {
   NSURL *url = text ? [NSURL URLWithString:text] : nil;
   return [@[@"http", @"https"] containsObject:url.scheme.lowercaseString];
 }
-static bool imageURL(NSPasteboardItem *item) {
+// composer_media.rs: whether the HTML is an <img> of the URL itself.
+extern bool tb_drag_html_shows_image(const void *html, size_t htmlLength, const void *url, size_t urlLength);
+// html_tags::DRAG_HTML_BYTES, in UTF-16 units: checked before the UTF-8 copy,
+// and all a drag's items' HTML together (`budget`), so many items of HTML
+// that doesn't match can't add up (Codex's review). A URL longer than any
+// real picture's isn't one.
+#define TB_DRAG_HTML_UNITS (256 * 1024)
+#define TB_DRAG_ITEMS 16
+#define TB_DRAG_URL_UNITS (16 * 1024)
+static bool imageURL(NSPasteboardItem *item, NSUInteger *budget) {
   NSString *text = [item stringForType:NSPasteboardTypeURL];
-  if (!webURL(text)) return false;
+  if (text.length > TB_DRAG_URL_UNITS || !webURL(text)) return false;
   if (pictureName([NSURL URLWithString:text].path)) return true;
   // Chrome/Safari can offer extensionless image URLs with their <img>
   // markup. An ordinary link must never be fetched as a picture: a GET
   // might consume a sign-in or unsubscribe link.
   NSString *html = [item stringForType:NSPasteboardTypeHTML];
+  // This runs in draggingEntered, on the main thread, on HTML any web page
+  // can put in a drag. A regex here backtracked: 40 KB of `<img ` held the
+  // app five seconds (Daybreak 120, 13 Nov 2026). Now it's a size check
+  // before any copy, then one pass in Rust (html_tags.rs).
   if (!html) return false;
-  NSRegularExpression *images = [NSRegularExpression regularExpressionWithPattern:@"<img\\b[^>]*\\bsrc\\s*=\\s*(?:\"([^\"]+)\"|'([^']+)'|([^\\s>]+))" options:NSRegularExpressionCaseInsensitive error:nil];
-  NSURL *url = [NSURL URLWithString:text];
-  for (NSTextCheckingResult *match in [images matchesInString:html options:0 range:NSMakeRange(0, html.length)]) {
-    for (NSUInteger group = 1; group <= 3; group++) {
-      NSRange range = [match rangeAtIndex:group];
-      if (range.location == NSNotFound) continue;
-      NSString *src = [[html substringWithRange:range] stringByReplacingOccurrencesOfString:@"&amp;" withString:@"&"];
-      if ([[NSURL URLWithString:src] isEqual:url]) return true;
-    }
-  }
-  return false;
+  if (html.length > *budget) { *budget = 0; return false; }
+  *budget -= html.length;
+  NSData *markup = [html dataUsingEncoding:NSUTF8StringEncoding];
+  NSData *want = [text dataUsingEncoding:NSUTF8StringEncoding];
+  return markup && want && tb_drag_html_shows_image(markup.bytes, markup.length, want.bytes, want.length);
 }
 static bool picturePromise(NSFilePromiseReceiver *promise) {
   for (NSString *type in promise.fileTypes) {
@@ -96,6 +153,7 @@ static bool readBoard(NSPasteboard *board, bool drag, TBMediaSink sink, void *co
   NSArray<NSFilePromiseReceiver *> *promises = hasPromises ? [[board readObjectsForClasses:@[NSFilePromiseReceiver.class] options:nil] copy] : @[];
   NSUInteger promiseIndex = 0;
   NSSet *promiseTypes = [NSSet setWithArray:[NSFilePromiseReceiver readableTypesForPasteboard:board]];
+  NSUInteger htmlBudget = TB_DRAG_HTML_UNITS;
   for (NSPasteboardItem *item in items) {
     // readObjects returns receivers in pasteboard-item order. Advance even
     // when this item's file or image bytes win, so alternatives stay paired
@@ -164,7 +222,7 @@ static bool readBoard(NSPasteboard *board, bool drag, TBMediaSink sink, void *co
     }
     if (!saved && drag && !file.isFileURL) {
       NSString *url = [item stringForType:NSPasteboardTypeURL];
-      if (imageURL(item)) {
+      if (imageURL(item, &htmlBudget)) {
         sink(context, 2, url.UTF8String, NULL, 0);
         taken = true;
       }
@@ -274,7 +332,11 @@ static NSDragOperation enterWithTypes(id window, SEL sel, id<NSDraggingInfo> inf
     NSMutableArray *types = [imageTypes() mutableCopy];
     bool hasPicture = [source availableTypeFromArray:types] != nil;
     bool hasURL = false;
-    for (NSPasteboardItem *item in source.pasteboardItems) { if (imageURL(item)) hasURL = true; }
+    NSUInteger budget = TB_DRAG_HTML_UNITS, seen = 0;
+    for (NSPasteboardItem *item in source.pasteboardItems) {
+      if (++seen > TB_DRAG_ITEMS) break;
+      if (imageURL(item, &budget)) { hasURL = true; break; }
+    }
     bool hasPromise = false;
     if ([source canReadObjectForClasses:@[NSFilePromiseReceiver.class] options:nil]) {
       for (NSFilePromiseReceiver *promise in [source readObjectsForClasses:@[NSFilePromiseReceiver.class] options:nil]) {

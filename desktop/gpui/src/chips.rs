@@ -141,7 +141,7 @@ fn picture_card(image: &ImageRef, cx: &App) -> AnyElement {
 }
 
 /// The card for a thread, or None if it's gone (ThreadChipCard.make).
-pub(crate) fn thread_card(thread_id: &str, threads: &HashMap<String, ThreadSummary>, accounts: &[threadbear_core::logins::Account], cx: &App) -> Option<AnyElement> {
+pub(crate) fn thread_card(thread_id: &str, threads: &HashMap<String, Arc<ThreadSummary>>, accounts: &[threadbear_core::logins::Account], cx: &App) -> Option<AnyElement> {
     let thread = threads.get(thread_id)?;
     let title = if thread.title.is_empty() { "Untitled thread" } else { thread.title.as_str() };
     let account = (!thread.account_id.is_empty()).then(|| threadbear_core::logins::short_account_name(&thread.account_id, accounts));
@@ -421,7 +421,7 @@ impl ThreadPane {
             }
         };
         // Its label is what it's called to a screen reader, and to a script.
-        chip.test_support().aria_label(name).into_any_element()
+        chip.test_support().role(Role::Link).aria_label(name).into_any_element()
     }
 
     /// The thread's hover card, from the app's thread list.
@@ -503,7 +503,7 @@ pub(crate) fn peek_command(app: &Entity<crate::app::Threadbear>, cmd: &serde_jso
         .ok_or_else(|| format!("the chip {words} isn't on screen"))?;
     if cmd["press"].as_bool() == Some(true) {
         let ChipKind::Picture(index) = kind else { return Err(format!("{words} isn't a picture's chip")) };
-        let at = element.bounds().center();
+        let at = element.visible_bounds().center();
         window.pointer_move(at, None, cx);
         window.pointer_down(at, MouseButton::Left, cx);
         window.pointer_up(at, MouseButton::Left, cx);
@@ -534,7 +534,7 @@ pub(crate) fn peek_command(app: &Entity<crate::app::Threadbear>, cmd: &serde_jso
 /// leaves the size the same.
 static INDEX: LazyLock<Mutex<Option<(usize, Instant, Arc<ThreadIndex>)>>> = LazyLock::new(|| Mutex::new(None));
 
-pub(crate) fn thread_index(threads: &HashMap<String, ThreadSummary>) -> Arc<ThreadIndex> {
+pub(crate) fn thread_index(threads: &HashMap<String, Arc<ThreadSummary>>) -> Arc<ThreadIndex> {
     let mut cached = INDEX.lock().unwrap_or_else(|e| e.into_inner());
     if let Some((count, at, index)) = cached.as_ref() {
         if *count == threads.len() && at.elapsed() < Duration::from_secs(2) {
@@ -715,7 +715,7 @@ impl MarkdownPlugin for ThreadChipPills {
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(move |_, window, cx| open_thread(&id, window, cx))
             .children(card);
-        Some(InlineElement::new(pill.test_support().aria_label(chip.word)).with_baseline(px(baseline)))
+        Some(InlineElement::new(pill.test_support().role(Role::Link).aria_label(chip.word)).with_baseline(px(baseline)))
     }
 }
 
@@ -771,7 +771,7 @@ impl ThreadPane {
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.open_thread_link(&id, window, cx)))
             .children(card);
-        line.child(pill.test_support().aria_label(name)).into_any_element()
+        line.child(pill.test_support().role(Role::Link).aria_label(name)).into_any_element()
     }
 
     /// The thread chips a row draws, each one's words and thread: the
@@ -863,7 +863,7 @@ pub(crate) fn chip_command(app: &Entity<crate::app::Threadbear>, cmd: &serde_jso
         .find(|e| e.visible() && e.path().iter().any(|id| matches!(id, ElementId::Name(n) if mine.iter().any(|m| n.starts_with(m.as_str())))))
         .ok_or_else(|| format!("the chip {word} isn't on screen"))?;
     if cmd["click"].as_bool() == Some(true) {
-        let at = element.bounds().center();
+        let at = element.visible_bounds().center();
         window.pointer_move(at, None, cx);
         window.pointer_down(at, MouseButton::Left, cx);
         window.pointer_up(at, MouseButton::Left, cx);

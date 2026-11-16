@@ -3,15 +3,15 @@ import assert from 'node:assert/strict';
 import { sleep } from '../support/driver.ts';
 import type { ThreadbearWorld } from '../support/world.ts';
 
-// The mock's threads on "bruce" (@remote-threads turns them on, world.ts).
+// The mock's threads on "mac-mini" (@remote-threads turns them on, world.ts).
 
-When('its runner lets the thread go to bruce', async function (this: ThreadbearWorld) {
+When('its runner lets the thread go to mac-mini', async function (this: ThreadbearWorld) {
   const d = await this.app.dump();
   assert.ok(d.selection?.id);
   await this.app.do({ cmd: 'mock', method: 'moveAway', params: { threadId: d.selection.id } });
 });
 
-When('its runner lets the thread go to bruce while the old Mac still lists it', async function (this: ThreadbearWorld) {
+When('its runner lets the thread go to mac-mini while the old Mac still lists it', async function (this: ThreadbearWorld) {
   const d = await this.app.dump();
   assert.ok(d.selection?.id);
   await this.app.do({ cmd: 'mock', method: 'moveAway', params: { threadId: d.selection.id, staleIndex: true } });
@@ -94,7 +94,7 @@ Then('the move sheet stayed closed', async function (this: ThreadbearWorld) {
 });
 
 // Both apps' `tiles`: what each picture of the message says when it isn't
-// drawn ("Couldn't get it from bruce"), "picture" when it is.
+// drawn ("Couldn't get it from mac-mini"), "picture" when it is.
 Then('pressing the picture chip in my message opens nothing', async function (this: ThreadbearWorld) {
   const row = await this.until('my message', (d) => d.transcript.rows.find((r) => r.kind === 'user'));
   const said = await this.app.do({ cmd: 'peek', row: row.id, words: 'Picture 1', press: true }).then((r) => `ok ${r}`, (e) => String(e));
@@ -148,6 +148,12 @@ When('a reply arrives on the destination', async function (this: ThreadbearWorld
   await this.app.do({ cmd: 'mock', method: 'stream', params: { threadId: d.selection?.id, text: 'The destination is serving this thread', hz: 60 } });
 });
 
+When('its old runner lists the thread again', async function (this: ThreadbearWorld) {
+  const d = await this.app.dump();
+  await this.app.do({ cmd: 'mock', method: 'moveSourceBack', params: { threadId: d.selection?.id } });
+  await sleep(500);
+});
+
 When('the index restarts while its move to this Mac is waiting', async function (this: ThreadbearWorld) {
   const d = await this.app.dump();
   await this.app.do({ cmd: 'mock', method: 'moveIndexRestart', params: { threadId: d.selection?.id } });
@@ -164,4 +170,9 @@ When('its move to this Mac is claimed before the local thread arrives', async fu
   // Keep the source row until claimed, unlike the moveAway example.
   await this.app.do({ cmd: 'mock', method: 'moveArrive', params: { threadId: d.selection?.id, claimedFirst: true } });
   await sleep(500);
+});
+
+// Runs on › Folder › Other…, the path typed in its dialog and Return pressed.
+When('I type {string} as the folder on that machine', async function (this: ThreadbearWorld, folder: string) {
+  await this.app.do({ cmd: 'composer-menu', menu: 'runner', click: 'Other…', folder });
 });

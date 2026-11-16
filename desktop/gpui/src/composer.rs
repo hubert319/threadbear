@@ -7,6 +7,7 @@
 // U+FFFC mark per chip, the chip drawn by the renderer below, and the input
 // keeps them atomic through edits and undo. That mark is exactly what the
 // Swift draft holds (InlinePictures), so the two apps' drafts read the same.
+use crate::a11y::A11yRole as _;
 use crate::app::Threadbear;
 use crate::composer_card::CardState;
 use crate::composer_chips::ModelPickerView;
@@ -14,10 +15,11 @@ use crate::style;
 use crate::thread::ThreadPane;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Copy, Cut, Enter, Escape, IndentInline, InlineToken, InlineTokenContext, InlineTokenHoverEvent, InputEvent, MoveDown, MoveUp, Textarea, TextareaState};
-use gpui_kit::component::spinner::Spinner;
+use crate::spinner::Spinner;
 use gpui_kit::component::{h_flex, v_flex, ActiveTheme as _, Icon, Sizable as _};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use gpui_kit::base::A11yDisabledExt as _;
 // The zoom-aware px (style.rs), in place of GPUI's.
 use crate::style::px;
 use serde_json::{json, Value};
@@ -83,7 +85,7 @@ pub struct Composer {
     /// Which card was last seen arriving, for it to settle in (composer_card.rs).
     pub(crate) card_arrival: crate::composer_card::CardArrival,
     /// The card's text style, one per appearance (`card_reading_style`).
-    pub(crate) card_style: Option<((bool, u32), gpui_kit::base::TextViewStyle)>,
+    pub(crate) card_style: Option<(crate::style::ReadingStyleKey, gpui_kit::base::TextViewStyle)>,
     shown_placeholder: SharedString,
     /// The slash palette's own state (`PaletteState`), and the list this
     /// opening of it has asked for (the thread's, or a new thread's login
@@ -106,6 +108,11 @@ pub struct Composer {
     /// What the box is to hold at the next render (an edit sent puts back
     /// what was in it before; that needs the window).
     pending_box: Option<(String, Vec<ImageRef>)>,
+    /// The box's spelling marks and the text they were found in
+    /// (composer_spelling.rs).
+    pub(crate) spell: crate::composer_spelling::SpellState,
+    /// Board clicks wait for the box's own window and any saved draft restore.
+    pending_mentions: Vec<threadbear_core::board::PendingMention>,
     _subs: Vec<Subscription>,
 }
 
@@ -183,14 +190,19 @@ impl Composer {
             // what's in the box.
             InputEvent::Change => {
                 this.palette_text_changed(cx);
+                // Marks, and a correction as a word ends (composer_spelling.rs).
+                this.spelling_after_edit(window, cx);
                 // Kept across a quit (drafts.rs).
                 if let Some(app) = this.app.upgrade() {
                     app.update(cx, |app, cx| app.drafts_changed(cx));
                 }
                 cx.notify();
             }
+            // Leaving the box marks the word it was in, as NSTextView does.
+            InputEvent::Blur => this.refresh_spelling_marks(false, false, cx),
             _ => {}
         });
+        crate::text_services::register_text_box(&input);
         Composer {
             thread_id,
             client,
@@ -216,12 +228,14 @@ impl Composer {
             shown_placeholder: "Message".into(),
             editing: None,
             pending_box: None,
+            pending_mentions: vec![],
             palette: PaletteState::default(),
             palette_asked: None,
             palette_scroll: ScrollHandle::new(),
             card_width: Rc::new(Cell::new(style::MAX_CONTENT_WIDTH)),
             controls_fit: Rc::new(Cell::new((0., 0.))),
             box_top: Rc::new(Cell::new(f32::MAX)),
+            spell: Default::default(),
             _subs: vec![sub],
         }
     }
@@ -320,7 +334,7 @@ impl Composer {
             .pb(px(10.))
             .text_size(px(style::size::LABEL))
             .line_height(px(16.))
-            .child(h_flex().items_start().gap(px(8.)).child(div().flex_none().pt(px(1.)).child(mark)).child(crate::highlights::tipped(div().id("limit-text").flex_1().min_w_0(), text.clone()).child(text)));
+            .child(h_flex().items_start().gap(px(8.)).child(div().flex_none().pt(px(1.)).child(mark)).child(crate::highlights::tipped_as(div().id("limit-text").flex_1().min_w_0(), text.clone(), gpui_kit::Role::GenericContainer).child(text)));
         if !advice.targets.is_empty() || advice.stopped {
             // Wraps in a narrow window rather than running past the box's edge.
             let mut row = h_flex().flex_wrap().gap(px(10.)).items_center();
@@ -334,7 +348,7 @@ impl Composer {
                 let (app_c, id) = (self.app.clone(), thread.id.clone());
                 let carry_on = advice.carry_on;
                 row = row.child(
-                    div().id("limit-switch").test_support().aria_label(tip).child(Button::new("limit-switch-button").label("Continue now on").small().secondary().tooltip(tip).on_click(move |_, _, cx| {
+                    div().id("limit-switch").test_support().a11y_role(Role::GenericContainer).aria_label(tip).child(Button::new("limit-switch-button").label("Continue now on").small().secondary().tooltip(tip).on_click(move |_, _, cx| {
                         app_c.update(cx, |a, cx| a.continue_now_on(&id, account.clone(), carry_on, cx)).ok();
                     })),
                 );
@@ -374,7 +388,7 @@ impl Composer {
                     }
                     menu
                 });
-                row = row.child(h_flex().gap(px(6.)).items_center().child(div().text_color(secondary).child("Carry on by itself")).child(div().id("limit-carry-on").test_support().aria_label(tip).child(menu)));
+                row = row.child(h_flex().gap(px(6.)).items_center().child(div().text_color(secondary).child("Carry on by itself")).child(div().id("limit-carry-on").test_support().a11y_role(Role::GenericContainer).aria_label(tip).child(menu)));
             }
             column = column.child(row);
         }
@@ -404,11 +418,19 @@ impl Composer {
         if let Some(restore) = &self.restore {
             all = RestoreDraft::joined(restore.clone(), all);
         }
-        all.for_saving()
+        let (mut text, images) = all.for_saving();
+        for mention in &self.pending_mentions { text = threadbear_core::board::adding(&mention.reference, &text); }
+        (text, images)
     }
 
     /// Whether the box holds anything a restart would lose: words, or a
     /// picture, one still being copied in included (app_update.rs).
+    /// A picture still being copied in: not in the draft yet (`draft`), so a
+    /// handover waits for it rather than lose it.
+    pub(crate) fn copying_picture(&self, cx: &App) -> bool {
+        self.box_chips(cx).iter().any(|(_, chip)| matches!(chip, threadbear_core::inline_chips::BoxChip::Picture(None)))
+    }
+
     pub(crate) fn holds_anything(&self, cx: &App) -> bool {
         let text = self.input.read(cx).value().to_string();
         threadbear_core::inline_chips::holds_anything(&text, &self.box_chips(cx))
@@ -626,6 +648,26 @@ impl Composer {
         cx.notify();
     }
 
+    /// Append a board card as its usual chip, preserving pictures (including
+    /// ones still being copied) and the rest of the draft.
+    pub(crate) fn mention_card(&mut self, task: &threadbear_core::projects::Task, cx: &mut Context<Self>) {
+        let mention = threadbear_core::board::PendingMention { reference: task.reference(), edit: self.editing.as_ref().map(|e| e.seq) };
+        if !self.pending_mentions.contains(&mention) { self.pending_mentions.push(mention); }
+        cx.notify();
+    }
+
+    fn append_card_reference(&mut self, reference: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let text = self.input.read(cx).value().to_string();
+        let added = threadbear_core::board::adding(reference, &text);
+        if added != text {
+            let blank = text.trim().is_empty();
+            let range = if blank { 0..text.len() } else { text.len()..text.len() };
+            self.input.update(cx, |s, cx| s.set_selected_range(range, cx));
+            let tail = if blank { added.as_str() } else { &added[text.len()..] };
+            self.insert_pieces(threadbear_core::inline_chips::draft_pieces(tail, 0), &[], window, cx);
+        }
+    }
+
     /// The box holding exactly `text` from the next frame: the tour's first
     /// message, written for them.
     pub(crate) fn replace_text(&mut self, text: String, cx: &mut Context<Self>) {
@@ -653,6 +695,8 @@ impl Composer {
         if text.is_empty() && images.is_empty() {
             return;
         }
+        // The runner it's shown on, as a send says it (thread.rs, Daybreak 113).
+        let Some(runner_id) = self.app.upgrade().and_then(|app| app.read(cx).threads.get(&thread_id).map(|t| t.runner_id.clone())) else { return };
         if let Some(edit) = self.editing.as_mut() {
             edit.sending = true;
         }
@@ -663,7 +707,7 @@ impl Composer {
         cx.spawn(async move |this, cx| {
             let mut stop_background = false;
             loop {
-                let mut params = json!({ "threadId": thread_id, "seq": seq, "text": text, "stopBackground": stop_background });
+                let mut params = json!({ "threadId": thread_id, "seq": seq, "text": text, "stopBackground": stop_background, "runnerId": runner_id });
                 if !images_json.is_empty() {
                     params["images"] = json!(images_json);
                 }
@@ -886,7 +930,7 @@ impl Composer {
         });
     }
 
-    fn text_and_selection(target: &Entity<TextareaState>, cx: &App) -> (String, Range<usize>) {
+    pub(crate) fn text_and_selection(target: &Entity<TextareaState>, cx: &App) -> (String, Range<usize>) {
         let state = target.read(cx);
         (state.value().to_string(), state.selected_range())
     }
@@ -1172,18 +1216,21 @@ impl Composer {
         let at = match strip {
             Some(index) => {
                 let label = format!("Picture {}", index + 1);
-                let found = |label: &str, window: &Window| window.elements().into_iter().filter(|e| e.visible() && e.label() == Some(label)).last().map(|e| e.bounds());
-                let tile = found(&label, &*window).ok_or_else(|| format!("no thumbnail {} over the box", index + 1))?;
-                window.pointer_move(tile.center(), None, cx);
+                // Its whole bounds, for where the × sits on it, and what's
+                // drawn of it, for where the pointer goes: a thumbnail
+                // scrolled partly out of the strip has its middle outside.
+                let found = |label: &str, window: &Window| window.elements().into_iter().filter(|e| e.visible() && e.label() == Some(label)).last().map(|e| (e.bounds(), e.visible_bounds()));
+                let (tile, drawn) = found(&label, &*window).ok_or_else(|| format!("no thumbnail {} over the box", index + 1))?;
+                window.pointer_move(drawn.center(), None, cx);
                 window.render_frame(cx);
-                let x = found(REMOVE_LABEL, &*window).ok_or("no × on the thumbnail while it's hovered")?;
+                let (x, x_drawn) = found(REMOVE_LABEL, &*window).ok_or("no × on the thumbnail while it's hovered")?;
                 let corner = Bounds::from_corners(point(tile.center().x, tile.origin.y), point(tile.right(), tile.center().y));
                 if !(corner.contains(&x.origin) && corner.contains(&point(x.right() - gpui_kit::px(1.), x.bottom() - gpui_kit::px(1.)))) {
                     return Err(format!("the × is at {x:?}, not in the top right corner of the thumbnail at {tile:?}"));
                 }
                 if remove {
                     let before = this.read(cx).chips(cx).len();
-                    click(x.center(), window, cx);
+                    click(x_drawn.center(), window, cx);
                     let (after, opened) = (this.read(cx).chips(cx).len(), this.read(cx).debug_opened.clone());
                     if let Some((paths, _)) = opened {
                         return Err(format!("the × opened the viewer on {paths:?}"));
@@ -1191,7 +1238,7 @@ impl Composer {
                     return if after + 1 == before { Ok(json!("ok removed")) } else { Err(format!("{before} pictures before the × and {after} after")) };
                 }
                 // Away from the × in the corner.
-                point(tile.origin.x + tile.size.width / 4., tile.bottom() - tile.size.height / 4.)
+                point(drawn.origin.x + drawn.size.width / 4., drawn.bottom() - drawn.size.height / 4.)
             }
             None => {
                 let number = number.ok_or("press needs a number")?;
@@ -1282,7 +1329,7 @@ impl Composer {
                 .test_support()
                 // "Picture N", as its chip among the words says, for VoiceOver
                 // and for scripts (`composer-peek` with `strip`).
-                .aria_label(SharedString::from(format!("Picture {}", index + 1)))
+                .role(Role::Button).aria_label(SharedString::from(format!("Picture {}", index + 1)))
                 .group("tile")
                 .relative()
                 .cursor_pointer()
@@ -1312,7 +1359,7 @@ impl Composer {
         let side = px(style::size::SEND_BUTTON);
         let circle = || div().flex().items_center().justify_center().size(side).rounded_full();
         if self.loading_pictures(cx) && (!running || self.has_send_content(cx)) {
-            return circle().id("composer-loading-picture").test_support().aria_label("Loading picture")
+            return circle().id("composer-loading-picture").test_support().role(Role::ProgressIndicator).aria_label("Loading picture")
                 .bg(style::send_faint_fill(cx)).child(Spinner::new().color(style::quiet_text(cx)).with_size(px(14.)))
                 .tip("Loading picture").into_any_element();
         }
@@ -1322,7 +1369,7 @@ impl Composer {
             return circle()
                 .id("composer-starting")
                 .test_support()
-                .aria_label("Starting the thread")
+                .role(Role::ProgressIndicator).aria_label("Starting the thread")
                 .bg(style::send_faint_fill(cx))
                 .child(Spinner::new().color(style::quiet_text(cx)).with_size(px(14.)))
                 .tip("Starting the thread")
@@ -1332,7 +1379,7 @@ impl Composer {
             return circle()
                 .id("composer-stopping")
                 .test_support()
-                .aria_label("Stopping")
+                .role(Role::ProgressIndicator).aria_label("Stopping")
                 .bg(style::send_faint_fill(cx))
                 .child(Spinner::new().color(style::quiet_text(cx)).with_size(px(14.)))
                 .tip("Stopping")
@@ -1343,7 +1390,7 @@ impl Composer {
             return circle()
                 .id("composer-stop")
                 .test_support()
-                .aria_label("Stop")
+                .role(Role::Button).aria_label("Stop")
                 .cursor_pointer()
                 .bg(bg)
                 // A filled square, as the Swift app's `stop.fill` at 9 pt bold:
@@ -1362,12 +1409,14 @@ impl Composer {
         circle()
             .id("composer-send")
             .test_support()
-            .aria_label("Send")
+            .role(Role::Button).aria_label("Send")
             .when(can_send, |s| s.cursor_pointer())
             .bg(bg)
             .child(self.hopping(Icon::from(IconName::ArrowUp).with_size(px(14.)).text_color(fg).into_any_element()))
             .when(can_send, |s| s.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.send(window, cx))))
             .tip(tip)
+            // Dimmed with nothing to send, as SendButton's `.disabled`.
+            .a11y_disabled(!can_send)
             .into_any_element()
     }
 
@@ -1396,7 +1445,9 @@ impl Composer {
         let thread_drop = this.clone();
         let file_drop = this.clone();
         let drop_target = this;
-        div()
+        let menu_owner = cx.entity().downgrade();
+        let menu_input = self.input.clone();
+        self.spelling_actions(div(), cx)
             .w_full()
             // Greyed and locked while a new thread is being made from it, or
             // while its thread moves to another machine.
@@ -1448,26 +1499,38 @@ impl Composer {
             }))
             .on_drop(move |paths: &ExternalPaths, window, cx| {
                 if let Some(this) = drop_target.upgrade() {
+                    // Where it's let go, over the words (`performDragOperation`).
+                    let at = window.mouse_position();
                     this.update(cx, |this, cx| {
                         let target = this.input.clone();
+                        this.caret_to_drop(&target, at, cx);
                         this.take_drop_in(&target, paths.paths().to_vec(), window, cx);
                     });
                 }
             })
             .on_drop(move |drag: &crate::composer_inline::DraggedThread, window, cx| {
                 if let Some(this) = thread_drop.upgrade() {
-                    this.update(cx, |this, cx| this.take_thread_drop(drag, window, cx));
+                    let at = window.mouse_position();
+                    this.update(cx, |this, cx| this.take_thread_drop(drag, at, window, cx));
                 }
             })
             // A file or picture dragged from inside the app (file_drag.rs).
             .on_drop(move |file: &crate::file_drag::DraggedFile, window, cx| {
                 if let (Some(this), Some(real)) = (file_drop.upgrade(), file.still_grabbed()) {
-                    this.update(cx, |this, cx| this.take_paths(vec![real], window, cx));
+                    let at = window.mouse_position();
+                    this.update(cx, |this, cx| {
+                        let target = this.input.clone();
+                        this.caret_to_drop(&target, at, cx);
+                        this.take_paths(vec![real], window, cx);
+                    });
                 }
             })
             .child(
                 bare_textarea(Textarea::new(&self.input))
                     .disabled(creating)
+                    // NSTextView's right-click menu: spelling, then Cut, Copy and
+                    // Paste, then Spelling and Grammar to Speech.
+                    .context_menu(move |_, window, cx| crate::composer_spelling::context_menu(&menu_owner, &menu_input, window, cx))
                     .text_size(px(style::size::COMPOSER))
                     .line_height(px(style::size::BODY_LINE))
                     .token(move |ctx, _window, cx| match token_owner.upgrade() {
@@ -1526,6 +1589,16 @@ impl Render for Composer {
             if let Some(restore) = self.restore.take() {
                 self.apply_restore(restore, window, cx);
             }
+        }
+        let mentions = threadbear_core::board::take_mentions(&mut self.pending_mentions, self.editing.as_ref().map(|e| e.seq), self.restore.is_some());
+        if !mentions.is_empty() {
+            for reference in mentions {
+                self.append_card_reference(&reference, window, cx);
+            }
+            // This is the window actually drawing the box now. A Highlights
+            // window never activates or focuses a hidden box elsewhere.
+            self.focus(window, cx);
+            crate::web_panels::keyboard_to_app(window);
         }
         self.renumber_chips(cx);
         // With answers picked the box is for anything else; under asks with
@@ -1665,7 +1738,7 @@ pub(crate) fn remove_badge(id: impl Into<ElementId>) -> impl StatefulInteractive
     div()
         .id(id)
         .test_support()
-        .aria_label(REMOVE_LABEL)
+        .role(Role::Button).aria_label(REMOVE_LABEL)
         .size(px(18.))
         .flex()
         .items_center()

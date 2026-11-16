@@ -40,7 +40,7 @@ impl Threadbear {
         // Nothing to pair with: no mirror (the list's reason), or a runner
         // that doesn't know devices.
         let can_pair = s.loaded && s.devices.reason.is_none() && !s.unsupported;
-        SetupChecklist::build(self.threads.values(), &self.logins.accounts, &s.devices.devices, can_pair, s.local_only)
+        SetupChecklist::build(self.threads.values().map(|t| &**t), &self.logins.accounts, &s.devices.devices, can_pair, s.local_only)
     }
 
     /// The activity bar's icon shows while something's left and Mike hasn't
@@ -144,7 +144,7 @@ impl Threadbear {
         if list.left() > 0 {
             children.push(
                 div()
-                    .id("setup-hide")
+                    .id("setup-hide").role(Role::Button)
                     .cursor_pointer()
                     .text_size(px(style::size::DETAIL))
                     .text_color(secondary)

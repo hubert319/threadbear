@@ -36,6 +36,23 @@ import { ErrorCode, RpcError, remoteCreateMode, type LabReviewLedger } from './p
 import { seal } from './secrets.ts';
 
 export const SCALE = 8;
+// The greatest seq a row may have (the backend's MAX_SEQ, convex/lib.ts):
+// times SCALE, plus the few added to it, still a whole number JSON and a
+// double carry exactly.
+export const MAX_RELAY_SEQ = 2 ** 49;
+
+/** A row's seq is a whole number from 0 to MAX_RELAY_SEQ: anything else a runner key wrote (NaN, an infinity, a fraction) would break the order and the event ids made from it. */
+export function isRelaySeq(n: unknown): n is number {
+  return Number.isSafeInteger(n) && (n as number) >= 0 && (n as number) <= MAX_RELAY_SEQ;
+}
+
+// A page with only the rows whose seq is one (isRelaySeq): one bad row
+// leaves the rest of the thread showing (Daybreak, 15 Nov 2026). The backend
+// stores none since then; this is for older rows, and older backends.
+function wellFormed(p: Page): Page {
+  const messages = Array.isArray(p?.messages) ? p.messages.filter((m) => isRelaySeq(m?.seq)) : [];
+  return { messages, hasMore: p?.hasMore === true };
+}
 // The thread's row says it has stopped a moment before its last messages
 // arrive (the other runner writes rows, then messages): its turn ends only
 // once it has said so for this long.
@@ -277,7 +294,7 @@ export function planOutcome(plan: RelayRow, newerPlan: boolean): 'go' | 'revise'
 /** A thread's held rows and row as transcript events, oldest first, in relay seqs. Pure, so a page and the live stream agree. */
 export function relayEvents(threadId: string, rows: RelayRow[], row: RelayThreadRow | null, cards: Card[], olderMore: boolean, runnerName: string, settled = true, bodies?: Map<number, HeldBody>): RelayEvent[] {
   const out: RelayEvent[] = [];
-  const sorted = [...rows].sort((a, b) => a.seq - b.seq);
+  const sorted = rows.filter((r) => isRelaySeq(r.seq)).sort((a, b) => a.seq - b.seq);
   // Stopped only once it has said so for a moment (SETTLE_MS).
   const running = row ? RUNNING.has(row.status) || !settled : true;
   const env = (seq: number, r: RelayRow, body: Record<string, unknown>): RelayEvent => ({ seq, ts: r.at, threadId, ...(r.turn ? { turnId: r.turn } : {}), ...body }) as RelayEvent;
@@ -313,7 +330,7 @@ export function relayEvents(threadId: string, rows: RelayRow[], row: RelayThread
     } else if (r.role === 'note') {
       // That runner's thread moved to another login, or is waiting for
       // room: the app keeps these on show (is_login_note in
-      // desktop/core/src/reducer/row.rs). The only notes that come over.
+      // desktop/core/src/reducer/row.rs). Saved-message notices come over too.
       out.push(env(base + 1, r, { type: 'system.note', text: r.text, login: true }));
     } else if (r.role !== 'tool') {
       // A kind of row from a newer backend than this runner knows: left
@@ -525,6 +542,12 @@ export class Relay {
     return Boolean(this.deps.source() && this.find(threadId));
   }
 
+  /** The runner a request about the thread goes to, as `call` picks it
+   * (`watch` follows the index). */
+  ownerOf(threadId: string): string | undefined {
+    return this.deps.source() ? this.find(threadId)?.runnerId : undefined;
+  }
+
   private src(): RelaySource {
     const s = this.deps.source();
     if (!s) throw new RpcError(ErrorCode.other, "This Mac's runner can't reach other runners through Convex now (sync is off, or Convex hasn't updated yet).");
@@ -714,6 +737,11 @@ export class Relay {
     if (!w) {
       w = { threadId, runnerId: t.runnerId, rows: new Map(), bodies: new Map(), olderMore: true, loaded: false, row: null, cards: new Map(), decided: new Map(), given: new Set(), unsub: [], usedAt: this.deps.clock.now() };
       this.watches.set(threadId, w);
+    } else if (w.runnerId !== t.runnerId) {
+      // Moved to another runner while watched: its commands go to the one
+      // the index lists now, the one ownerOf names (the backend refuses the
+      // old one's anyway). The events are the thread's, wherever it runs.
+      w.runnerId = t.runnerId;
     }
     w.usedAt = this.deps.clock.now();
     this.sweepSoon();
@@ -779,7 +807,7 @@ export class Relay {
       (async () => {
         let after = newest;
         for (;;) {
-          const page = (await this.read('relay:remoteMessages', { threadId: w.threadId, afterSeq: after, limit: PAGE, ...this.withNotes() })) as Page;
+          const page = wellFormed((await this.read('relay:remoteMessages', { threadId: w.threadId, afterSeq: after, limit: PAGE, ...this.withNotes() })) as Page);
           for (const m of page.messages) w.rows.set(m.seq, m);
           trimHeld(w);
           const last = page.messages[page.messages.length - 1]?.seq;
@@ -809,7 +837,7 @@ export class Relay {
       return;
     }
     const [row, page] = await Promise.all([this.read('relay:remoteThread', { threadId: w.threadId }), this.read('relay:remoteMessages', { threadId: w.threadId, limit: PAGE, ...this.withNotes() })]);
-    const p = page as Page;
+    const p = wellFormed(page as Page);
     for (const m of p.messages) w.rows.set(m.seq, m);
     w.olderMore = p.hasMore;
     const r = row as RelayThreadRow | null;
@@ -831,7 +859,7 @@ export class Relay {
       let have = [...w.rows.keys()].filter((s) => s < realBefore).length;
       while (have < Math.ceil(limit / 2) && w.olderMore && w.rows.size < MAX_SCROLLED) {
         const oldest = Math.min(...w.rows.keys());
-        const older = (await this.read('relay:remoteMessages', { threadId: w.threadId, beforeSeq: oldest, limit: PAGE, ...this.withNotes() })) as Page;
+        const older = wellFormed((await this.read('relay:remoteMessages', { threadId: w.threadId, beforeSeq: oldest, limit: PAGE, ...this.withNotes() })) as Page);
         for (const m of older.messages) w.rows.set(m.seq, m);
         w.olderMore = older.hasMore;
         if (!older.messages.length) break;
@@ -883,9 +911,10 @@ export class Relay {
     w.settleTimer = undefined;
   }
 
-  private async onTail(w: Watch, tail: Page): Promise<void> {
+  private async onTail(w: Watch, given: Page): Promise<void> {
+    const tail = wellFormed(given);
     this.reads++;
-    this.bytes += JSON.stringify(tail).length;
+    this.bytes += JSON.stringify(given).length;
     // A watch started before this runner had heard its backend takes login
     // notes (a start, before the first heartbeat) asked for none and would
     // go on getting none: watched again, asking. The new watch's first
@@ -941,7 +970,7 @@ export class Relay {
     const stale = sorted.filter((r) => r.plan && !r.planDecision && r.seq < oldest && r.seq === lastPlan);
     for (const r of stale) {
       try {
-        const page = (await this.read('relay:remoteMessages', { threadId: w.threadId, afterSeq: r.seq - 1, limit: 1, ...this.withNotes() })) as Page;
+        const page = wellFormed((await this.read('relay:remoteMessages', { threadId: w.threadId, afterSeq: r.seq - 1, limit: 1, ...this.withNotes() })) as Page);
         const m = page.messages[0];
         if (m?.seq === r.seq) w.rows.set(m.seq, m);
       } catch {
@@ -956,7 +985,7 @@ export class Relay {
     try {
       while (w.hole) {
         const { after, until: requestedUntil } = w.hole;
-        const page = (await this.read('relay:remoteMessages', { threadId: w.threadId, afterSeq: after, limit: PAGE, ...this.withNotes() })) as Page;
+        const page = wellFormed((await this.read('relay:remoteMessages', { threadId: w.threadId, afterSeq: after, limit: PAGE, ...this.withNotes() })) as Page);
         for (const m of page.messages) w.rows.set(m.seq, m);
         trimHeld(w);
         const last = page.messages[page.messages.length - 1]?.seq;
@@ -1237,8 +1266,13 @@ export class Relay {
       case 'threads.send': {
         const text = typeof p.text === 'string' ? p.text : '';
         const started = this.deps.clock.now();
-        const r = await this.withPictures(w.runnerId, p.images, started, (images) =>
-          this.command(w.runnerId, threadId, 'send', { text, ...(Array.isArray(p.answers) && p.answers.length ? { answers: p.answers } : {}), ...(images.length ? { images } : {}) }, images.length ? { settleBy: started + REPLY_BUDGET_MS } : {}),
+        // The runner it was checked against (rpc.ts mustReachShown), held
+        // through the uploads: the watch may follow a move meanwhile, and
+        // the words go to that runner or nowhere (the backend refuses one
+        // that no longer has the thread).
+        const to = w.runnerId;
+        const r = await this.withPictures(to, p.images, started, (images) =>
+          this.command(to, threadId, 'send', { text, ...(Array.isArray(p.answers) && p.answers.length ? { answers: p.answers } : {}), ...(images.length ? { images } : {}) }, images.length ? { settleBy: started + REPLY_BUDGET_MS } : {}),
         );
         // Not taken in TAKE_MS: it waits in the backend for that runner.
         return { turnId: '', ...(r.state === 'pending' ? { queued: true } : {}) };

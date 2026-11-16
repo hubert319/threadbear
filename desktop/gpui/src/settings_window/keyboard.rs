@@ -6,9 +6,10 @@
 // The keys stay in shortcuts.json, which an agent can change too, and the app
 // picks up (shell.rs, `watch_shortcuts`); this writes it. The rules are
 // threadbear_core::keyboard.
+use crate::a11y::A11yRole as _;
 use super::{section, SettingsWindow};
 use crate::app::Threadbear;
-use crate::highlights::tipped;
+use crate::highlights::{tipped, tipped_as};
 use crate::push_button::PushButton;
 use crate::{icons, style};
 use gpui_kit::base::TestSupportExt as _;
@@ -225,7 +226,7 @@ impl SettingsWindow {
         let field = div()
             .id("settings-keyboard-search")
             .test_support()
-            .aria_label(rules::SEARCH_PROMPT)
+            .a11y_role(Role::GenericContainer).aria_label(rules::SEARCH_PROMPT)
             .tip(rules::SEARCH_PROMPT)
             .h(px(29.))
             .pl(px(16.))
@@ -260,7 +261,7 @@ impl SettingsWindow {
             .text_size(px(12.))
             .line_height(px(style::natural_line(12.)))
             .when_some(problem, |s, problem| s.child(h_flex().gap(px(6.)).items_start().text_color(orange).child(div().pt(px(1.)).child(icons::symbol("exclamationmark.triangle").with_size(px(12.)))).child(div().flex_1().child(problem))))
-            .child(h_flex().items_center().child(tipped(div().id("settings-keyboard-file"), path).text_color(secondary).child(rules::FOOTER)).child(div().flex_1()).child(reset_all));
+            .child(h_flex().items_center().child(tipped_as(div().id("settings-keyboard-file"), path, gpui_kit::Role::GenericContainer).text_color(secondary).child(rules::FOOTER)).child(div().flex_1()).child(reset_all));
         let me = cx.entity().downgrade();
         v_flex()
             .id("settings-keyboard")
@@ -304,7 +305,7 @@ impl SettingsWindow {
                 div()
                     .id(SharedString::from(format!("settings-key-reset-{}", command.name())))
                     .test_support()
-                    .aria_label(format!("Reset {}", command.title()))
+                    .role(Role::Button).aria_label(format!("Reset {}", command.title()))
                     .tip(tip.clone())
                     .flex_none()
                     .cursor_pointer()
@@ -347,7 +348,7 @@ impl SettingsWindow {
             .test_support()
             // Its name for VoiceOver and the specs, as Swift's
             // accessibilityLabel: "Archive, ⌘E".
-            .aria_label(rules::cap_label(command, bindings))
+            .role(Role::Button).aria_label(rules::cap_label(command, bindings))
             .tip(tip.clone())
             .flex_none()
             .min_w(px(78.))
@@ -510,7 +511,7 @@ pub(crate) fn automation(app: &Entity<Threadbear>, cmd: &Value, cx: &mut App) ->
             let click = |label: &str, prefix: bool, window: &mut Window, cx: &mut App| -> bool {
                 let found = window.elements().into_iter().filter(|e| e.visible() && e.label().is_some_and(|l| if prefix { l.starts_with(label) } else { l == label })).last();
                 let Some(found) = found else { return false };
-                let at = found.bounds().center();
+                let at = found.visible_bounds().center();
                 window.pointer_move(at, None, cx);
                 window.pointer_down(at, MouseButton::Left, cx);
                 window.pointer_up(at, MouseButton::Left, cx);

@@ -26,6 +26,9 @@ import { SwiftDriver } from '../support/swift.ts';
 import { okValue, sleep, type Driver, type Dump } from '../support/driver.ts';
 import { windowFrame } from './real-screen.ts';
 import { fileURLToPath } from 'node:url';
+import { ensurePerfLock } from './perf-lock.ts';
+
+await ensurePerfLock();
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -186,15 +189,15 @@ const scenes: Record<string, Scene> = {
     },
     seconds: 7,
   },
-  // The working bear through a long turn: it pops up, waves, breathes and
-  // blinks (the Swift app has no scripted hover for it, so its wink and hop
-  // aren't filmed).
+  // The working line through a long turn: Swift's bear pops up, waves,
+  // breathes and blinks; GPUI's paw moves every couple of seconds.
   'bear-hover': {
     setup: async (app) => scenes.archive.setup(app),
     act: async (app) => {
       await app.do({ cmd: 'mock', method: 'stream', params: { threadId: 'demo_reply_buttons', seconds: 30, hz: 1 } });
     },
-    seconds: 8,
+    // TB_CLIP_SECONDS for longer, to see more of the GPUI paw's moves.
+    seconds: Number(process.env.TB_CLIP_SECONDS) || 8,
   },
   // A thread woken by its background jobs, opened: the bear getting up.
   woke: {
@@ -298,6 +301,20 @@ const scenes: Record<string, Scene> = {
   },
   // ⌘N, then a message from the new-thread page: the page fades up, and the
   // box drops to the bottom as the thread opens.
+  // A thread at work in the background: its row's arc turning in the
+  // sidebar (spinner.rs's layer in the GPUI app). Swift's turns in Core
+  // Animation, so the two should look alike.
+  spinner: {
+    setup: async (app) => {
+      await scenes.archive.setup(app);
+      const d = await app.dump();
+      const other = d.sidebar.sections.filter((s) => !s.collapsed).flatMap((s) => s.threads).find((t) => t.id !== d.selection?.id);
+      if (!other) throw new Error('no other thread to set working');
+      await app.do({ cmd: 'mock', method: 'background', params: { threadId: other.id, tasks: [{ kind: 'shell', description: 'npm test' }] } });
+      await sleep(1200);
+    },
+    act: async () => {},
+  },
   'new-thread': {
     seconds: 4,
     setup: async (app) => scenes.archive.setup(app),

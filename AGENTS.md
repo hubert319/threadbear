@@ -232,8 +232,9 @@ scroll view, and a scroll view that gets any of a gesture takes the rest itself,
 so swipes passed every test here and failed on Mike's trackpad twice (7 Nov).
 `app/Tools/post-gesture.swift` sends them through the window server. Someone
 else may be using that desktop: first check nothing's recording it
-(`pgrep -fl ffmpeg`) and that your window really is in front (`front`, then a
-look at the screen). Wake its screen with `caffeinate -u`, or the events go nowhere.
+(the `recording()` guard in `features/tools/real-screen.ts` checks executable
+names, including variants) and that your window really is in front (`front`,
+then a look at the screen). Wake its screen with `caffeinate -u`, or the events go nowhere.
 
 ## The GPUI port
 
@@ -322,8 +323,8 @@ if `tb` isn't found (an older runner, or outside a thread), use
 
 - `./check.sh` runs every check (`--quick`: the runner's typecheck and
   unit tests, about a minute, the Mac app's release build when `app/`
-  or `dock/` changed, and the GPUI port's core and client tests when
-  `desktop/` changed, with the full run adding a `cargo check` of the
+  or `dock/` changed, and the GPUI port's core and client tests and a
+  `cargo check` of the GPUI app when `desktop/` changed, with the full run adding a `cargo check` of the
   whole workspace; `--app`: the app's build and tests, for a
   change outside `runner/`). With a check host set it copies the checkout
   there, runs it, brings back failed steps' logs and deletes the copy
@@ -362,9 +363,9 @@ if `tb` isn't found (an older runner, or outside a thread), use
   GPUI landings, 10 to 12 Nov). Fix that red first; `tb land
   --despite-red` is for the landing that's the fix
   (docs/thread-worktrees.md, "Red on GitHub"). To bring GitHub's main
-  into this Mac's, or push it, run `scripts/sync-main.sh`: it holds
-  the landing lock throughout and checks a rebased combination before
-  main moves (docs/thread-worktrees.md, "Syncing main with GitHub"). You can carry on
+  into this Mac's, or push it, run `scripts/sync-main.sh`: a main only
+  ahead of GitHub's is pushed at once, and otherwise it holds the landing
+  lock and checks a rebased combination before main moves (docs/thread-worktrees.md, "Syncing main with GitHub"). You can carry on
   after landing; the next `tb land` lands only what's new. Changing a
   `package.json`? Replace the link first: `rm runner/node_modules` (no
   trailing slash, so only the link goes), then `npm ci` there. When the
@@ -429,9 +430,11 @@ if `tb` isn't found (an older runner, or outside a thread), use
 - The LaunchAgent's program is `~/Applications/Threadbear Runner.app`
   (`runner/launcher/`), a small app that runs `node launch.mjs` so macOS's
   privacy prompts say "Threadbear Runner", not "node". Releases never
-  rebuild it: a change under `runner/launcher/` only ships when Mike runs
-  `install-runner.sh` from a terminal. `tb status` and the app's Updates
-  panel tell him once it's on main, but say so in your end_turn too.
+  rebuild it: a change under `runner/launcher/` only ships through a
+  reinstall. Once it's on main the Updates panel offers Update it, which
+  stages it to take over at Mike's next login (with the `selfReinstall`
+  experiment the runner does that by itself, `runner/src/reinstall.ts`);
+  say so in your end_turn too.
 - Never pass `--now`, run `install-runner.sh`, `tb restart` the live runner,
   `launchctl kickstart` it or stop its node process: each ends your own turn
   and stops other threads' work. If one is needed, finish and tell Mike the
@@ -475,8 +478,10 @@ if `tb` isn't found (an older runner, or outside a thread), use
 ## Seeing and driving the app
 
 `desktop/scripts/dev-app.sh` runs a debug GPUI build with the scripted
-control, against the mock runner or a dev runner, its window behind Mike's
-and out of the Dock (`--help` for the rest). It builds on an
+control, against the mock runner or a dev runner, headless: out of the Dock,
+its windows transparent and letting clicks through, still drawing for `dump`
+and `shot`, and named "Threadbear Headless Tester" in ps (`--visible` puts
+it on screen, labelled, for a test that needs that; `--help` for the rest). It builds on an
 `updateBuildHosts` Mac and brings the binary back, or here through
 one-build.sh if none answers. The app refuses the real data folder and live
 runner (`--live` only if Mike says), and copies to a pasteboard of its own.

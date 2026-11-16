@@ -158,7 +158,7 @@ test('the row turns the folder config, plugins and the agent\'s updates off', ()
   assert.equal(conf.permission['*'], 'ask', 'a tool no one has heard of asks too');
   assert.equal(conf.agent.build.permission['*'], 'ask', "an agent's own rules outrank the top level");
   assert.equal(conf.agent.plan.permission['*'], 'ask');
-  assert.ok(ACP_AGENTS.opencode.args.includes('--pure'));
+  assert.ok(ACP_AGENTS.opencode.args().includes('--pure'));
 });
 
 test("a folder's plugin doesn't run", async () => {
@@ -707,6 +707,7 @@ test('Stop during the setup before a prompt: the prompt is never sent', async ()
   await done;
   assert.equal(r.log().filter((l) => l.prompt).length, before);
   assert.equal(results(r.outputs).at(-1)!.outcome, 'interrupted');
+  assert.deepEqual(results(r.outputs).at(-1)!.unreceived, ['stopme']);
 });
 
 test('Stop with a message waiting gives one result, when the turn is over', async () => {
@@ -722,6 +723,7 @@ test('Stop with a message waiting gives one result, when the turn is over', asyn
   await done;
   const [only] = results(r.outputs);
   assert.deepEqual(only.answered, ['a', 'b']);
+  assert.deepEqual(only.unreceived, ['b']);
   assert.equal(only.answers, 'a');
 });
 
