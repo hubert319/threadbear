@@ -66,6 +66,8 @@ test("a compromised old runner's schedule check and Always allow rules don't rea
     JSON.stringify({
       ...JSON.parse(recEntry.data.toString('utf8')),
       allowRules: ['Bash'],
+      // Claude in Chrome: the user's signed-in Chrome, never brought in from another Mac.
+      chrome: true,
       // A Run button on an open card, for a command and folder of its choosing.
       buttons: [{ id: 'abcd1234', title: 'Run', createdAt: 'x', run: { command: `touch '${marker}'`, cwd: '/' } }],
       needs: { seq: 1, needs: 'you', asks: [{ action: 'Run it', run: { command: `touch '${marker}'`, buttonId: 'abcd1234' } }] },
@@ -80,6 +82,7 @@ test("a compromised old runner's schedule check and Always allow rules don't rea
   assert.equal(moved.permissionMode, 'ask');
   assert.equal(moved.allowRules, undefined);
   assert.equal(moved.buttons, undefined);
+  assert.equal(moved.chrome, undefined);
   assert.equal((moved.needs?.asks?.[0] as { run?: unknown } | undefined)?.run, undefined);
   const notes = t.store.log(id).read(1, t.store.log(id).lastSeq).filter((e: any) => e.type === 'system.note').map((e: any) => e.text).join(' ');
   assert.match(notes, /shell check was left off here/);

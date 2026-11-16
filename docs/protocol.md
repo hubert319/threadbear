@@ -2161,7 +2161,10 @@ during a turn says so in a `system.note`.
 Agents: `create_thread` and `update_thread` take `chrome`. From a thread off
 Full or in a sandbox, turning it on asks on a card (the caller gate refuses
 it outright from `tb`); turning it off never asks. Another runner's thread
-can't be given it through Convex (`relay.ts` refuses the field).
+can't be given it through Convex (`relay.ts` refuses the field). A thread moved in from another machine arrives without it
+(`dropMovedPowers` in `runner/src/runner/moves.ts`), as that machine's
+Chrome isn't this one's; turn it on again here if it's wanted. The tools
+check that the thread could have it before showing a card.
 
 ## Pools
 

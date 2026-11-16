@@ -47,6 +47,7 @@ import type { StartRequest } from './cross-runner.ts';
 import { SECRET_TIMEOUT_DEFAULT_MIN, SECRET_TIMEOUT_MAX_MIN } from './secrets.ts';
 import { cutSafely, firstLineSafely } from './safe-cut.ts';
 import { pickRunner } from './moves.ts';
+import { checkChrome } from './chrome.ts';
 import { FINDINGS_REFUSALS, FINDINGS_REFUSED, MAX_FINDINGS, findingsProblem, refusalsThisTurn } from './runner/lab-review.ts';
 
 const CHROME_ARG = z.boolean().optional().describe("Claude in Chrome (the user's signed-in Chrome), only if they ask. Not on Auto or sandboxed. Applies from its CLI's next start.");
@@ -1890,6 +1891,8 @@ export function buildThreadbearTools(
           const cwd = there ? f?.trim() : await folder(f ?? '.');
           const confined = Boolean(caller?.confined && !there && cwd && control.sandboxed?.(cwd));
           const target: Authority = { mode: permissionMode ?? 'full', confined };
+          // Refused before any card, so the user isn't asked for what can't happen.
+          if (chrome) checkChrome({ permissionMode: target.mode, confined: Boolean(!there && cwd && control.sandboxed?.(cwd)) });
           const raising = Boolean(caller && above(target, caller));
           // Chrome has the user's logins: from a restricted thread, always a card.
           if (raising || (caller && chrome)) {
@@ -2010,6 +2013,8 @@ export function buildThreadbearTools(
         const id = await resolve(asked);
         const stops = (snooze !== undefined && snooze.trim().toLowerCase() !== 'off') || archived === true;
         if (id === selfId && stops) throw new Error("Can't snooze or archive this thread from inside its own turn. Do it once the turn is over by calling end_turn with needs \"nothing\" and archive: true, or snooze: and when to wake (the times this takes, or words like \"when the phone arrives\"), again if you already have.");
+        // Refused before any card, so the user isn't asked for what can't happen.
+        if (chrome === true) checkChrome({ permissionMode: permissionMode ?? (await modeOf(id)).mode, confined: Boolean(await control.confinedOf?.(id)) });
         const upd: Parameters<ThreadControl['update']>[0] = { threadId: id, byAgent: true };
         if (title !== undefined) {
           upd.title = title;

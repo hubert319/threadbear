@@ -67,6 +67,12 @@ function dropMovedPowers(rec: Record<string, any>): boolean {
     delete rec.buttons;
     changed = true;
   }
+  // Claude in Chrome is the user's signed-in Chrome on this machine: only
+  // turned on here (docs/protocol.md, "Claude in Chrome").
+  if (rec.chrome !== undefined) {
+    delete rec.chrome;
+    changed = true;
+  }
   for (const ask of Array.isArray(rec.needs?.asks) ? rec.needs.asks : []) {
     if (ask && typeof ask === 'object' && 'run' in ask) {
       delete ask.run;

@@ -175,3 +175,17 @@ test('update_thread: chrome turns on with a card from a thread off Full, and off
   assert.equal(off.error, false, off.text);
   assert.equal(s.rec(s.me.id).chrome, undefined);
 });
+
+test("create_thread and update_thread: a refusal comes before the card, so the user is never asked for what can't happen", async () => {
+  const s = setup('auto');
+  const before = s.h.events(s.me.id).filter((e) => e.type === 'approval.requested').length;
+  const self = await s.call('update_thread', { chrome: true });
+  assert.equal(self.error, true);
+  assert.match(self.text, /Auto/);
+  // Left out, the new thread takes the caller's Auto.
+  const made = await s.call('create_thread', { text: 'Chrome from Auto', chrome: true });
+  assert.equal(made.error, true);
+  assert.match(made.text, /Auto/);
+  assert.equal(s.h.events(s.me.id).filter((e) => e.type === 'approval.requested').length, before, 'no card');
+  assert.equal(s.rec(s.me.id).chrome, undefined);
+});
