@@ -1,8 +1,8 @@
 // Claude in Chrome per thread (docs/protocol.md, "Claude in Chrome"). The
 // CLI only loads the claude-in-chrome tools when started with --chrome
 // (claudeInChromeDefaultEnabled is for interactive sessions), so a thread
-// asks for it with `chrome` on its record. Never in Auto or a sandbox: both
-// read untrusted text, and Chrome has the user's logins.
+// asks for it with `chrome` on its record. Never in Auto: it reads
+// untrusted text, and Chrome has the user's logins.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -16,10 +16,9 @@ import type { ApprovalDecision, PermissionMode } from '../../src/protocol.ts';
 
 function setup(callerMode: PermissionMode = 'full') {
   const root = fs.realpathSync(tmpDir());
-  const box = path.join(root, 'sandboxed');
   const work = path.join(root, 'work');
-  for (const d of [box, work]) fs.mkdirSync(d, { recursive: true });
-  const h = makeHarness(tmpDir(), { sandbox: { folders: [box], image: 'threadbear-sandbox', docker: 'docker' } });
+  fs.mkdirSync(work, { recursive: true });
+  const h = makeHarness(tmpDir());
   const me = h.runner.create({ text: 'Me', accountId: 'claude-3', cwd: work, permissionMode: callerMode }).thread;
   h.adapter.last.init();
   const list = buildThreadbearTools(h.runner as never, me.id, () => h.clock.now(), undefined, undefined, undefined, { sleep: async () => {} });
@@ -43,7 +42,7 @@ function setup(callerMode: PermissionMode = 'full') {
   };
   const rec = (id: string) => h.store.loadAll().records.find((t) => t.id === id)!;
   const sessionsOf = (id: string) => h.adapter.sessions.filter((s) => s.opts.threadId === id);
-  return { h, box, work, me, call, withCard, rec, sessionsOf };
+  return { h, work, me, call, withCard, rec, sessionsOf };
 }
 
 // A message to an idle thread whose CLI went: the fresh one starts after a tick.
@@ -66,11 +65,10 @@ test('threads.create: chrome goes on the record and the summary, and the CLI is 
   assert.equal(s.sessionsOf(plain.id)[0].opts.chrome, undefined);
 });
 
-test('threads.create: chrome is refused in Auto (named or the default) and in a sandbox folder, and makes no thread', () => {
+test('threads.create: chrome is refused in Auto (named or the default), and makes no thread', () => {
   const s = setup();
   const before = s.h.runner.list().length;
   assert.throws(() => s.h.runner.create({ text: 'x', accountId: 'claude-3', cwd: s.work, permissionMode: 'auto', chrome: true }), /Auto/);
-  assert.throws(() => s.h.runner.create({ text: 'x', accountId: 'claude-3', cwd: s.box, permissionMode: 'full', chrome: true }), /sandbox/);
   s.h.cfg.defaults.permissionMode = 'auto';
   assert.throws(() => s.h.runner.create({ text: 'x', accountId: 'claude-3', cwd: s.work, chrome: true }), /Auto/);
   assert.equal(s.h.runner.list().length, before);
@@ -108,12 +106,10 @@ test('threads.update: chrome mid-turn waits for the turn, and says so', () => {
   assert.equal(first.ended, true);
 });
 
-test('threads.update: chrome is refused on an Auto or sandboxed thread; switching a Chrome thread to Auto restarts its CLI without it', async () => {
+test('threads.update: chrome is refused on an Auto thread; switching a Chrome thread to Auto restarts its CLI without it', async () => {
   const s = setup();
   const auto = s.h.runner.create({ text: 'x', accountId: 'claude-3', cwd: s.work, permissionMode: 'auto' }).thread;
   assert.throws(() => s.h.runner.update({ threadId: auto.id, chrome: true }), /Auto/);
-  const boxed = s.h.runner.create({ text: 'x', accountId: 'claude-3', cwd: s.box, permissionMode: 'full' }).thread;
-  assert.throws(() => s.h.runner.update({ threadId: boxed.id, chrome: true }), /sandbox/);
   // Turned on and to Auto in one call: refused too.
   const full = s.h.runner.create({ text: 'x', accountId: 'claude-3', cwd: s.work, permissionMode: 'full' }).thread;
   assert.throws(() => s.h.runner.update({ threadId: full.id, chrome: true, permissionMode: 'auto' }), /Auto/);

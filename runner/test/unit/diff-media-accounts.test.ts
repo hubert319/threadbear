@@ -10,6 +10,7 @@ import { AccountRegistry, discoverAccounts, resolveDefaultModel } from '../../sr
 import { cliEnv, setClaudeEntrypoint } from '../../src/adapters/claude/adapter.ts';
 import { loadConfig, recordListening, readRunnerJson } from '../../src/config.ts';
 import { tmpDir } from '../helpers/fakes.ts';
+import { skipOnWindows } from '../helpers/platform.ts';
 import { makePng } from '../helpers/png.ts';
 
 test('diffLines matches the CLI patch shape', () => {
@@ -47,7 +48,7 @@ test('computeEditDiff uses file line numbers when the file is known', () => {
 
 test('displayPath shows paths relative to the thread folder, real path included', () => {
   const dir = tmpDir();
-  assert.equal(displayPath(path.join(dir, 'src', 'a.ts'), dir), 'src/a.ts');
+  assert.equal(displayPath(path.join(dir, 'src', 'a.ts'), dir), path.join('src', 'a.ts'));
   assert.equal(displayPath(path.join(fs.realpathSync(dir), 'b.ts'), dir), 'b.ts');
   assert.equal(displayPath('/elsewhere/c.ts', dir), '/elsewhere/c.ts');
 });
@@ -84,6 +85,11 @@ test('copyImageInto says why a file could not be read', () => {
   fs.writeFileSync(empty, '');
   assert.throws(() => copyImageInto(inbox, empty), /empty\.png is empty/);
   assert.throws(() => copyImageInto(inbox, dir), /Not a file/);
+});
+
+test('copyImageInto says when a file is not allowed to be read', skipOnWindows('chmod 000 does not stop a file being read on Windows'), () => {
+  const dir = tmpDir();
+  const inbox = path.join(dir, 'inbox');
   if (process.getuid?.() !== 0) {
     const locked = path.join(dir, 'locked.png');
     fs.writeFileSync(locked, makePng(4, 4));
@@ -135,6 +141,17 @@ test('account discovery reads only the login email', () => {
     { id: 'claude-10', provider: 'claude', title: 'claude-10', configDir: path.join(accts, 'claude-10') },
   ]);
   assert.ok(!JSON.stringify(found).includes('SHOULD-NOT-APPEAR'));
+});
+
+test('runner.json hiddenLogins leaves a login out, even claude-main', () => {
+  const root = tmpDir();
+  const main = path.join(root, 'dot-claude');
+  fs.mkdirSync(main);
+  const accts = path.join(root, 'Accounts');
+  fs.mkdirSync(path.join(accts, 'claude-1'), { recursive: true });
+  const cfg = { userHome: root, pathEnv: '', claudeMainDir: main, claudeMainJson: path.join(root, 'claude.json'), tokenStatsAccountsDir: accts };
+  assert.deepEqual(discoverAccounts({ ...cfg, hiddenLogins: ['claude-main'] }).map((a) => a.id), ['claude-1']);
+  assert.deepEqual(discoverAccounts(cfg).map((a) => a.id), ['claude-main', 'claude-1']);
 });
 
 test("without Token Stats, logins come from the data dir's accounts folder", () => {
@@ -197,31 +214,31 @@ test('CLI env: Claude threads name themselves only on a plain subscription sign-
   const base = { PATH: '/bin', CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' };
   try {
     setClaudeEntrypoint(null);
-    assert.equal(cliEnv(acct(dir), base, none).CLAUDE_CODE_ENTRYPOINT, undefined, 'off: the SDK picks its own');
+    assert.equal(cliEnv(acct(dir), base, undefined, none).CLAUDE_CODE_ENTRYPOINT, undefined, 'off: the SDK picks its own');
     setClaudeEntrypoint('threadbear');
-    assert.equal(cliEnv(acct(dir), base, none).CLAUDE_CODE_ENTRYPOINT, 'threadbear');
+    assert.equal(cliEnv(acct(dir), base, undefined, none).CLAUDE_CODE_ENTRYPOINT, 'threadbear');
     // A key, gateway or cloud route in the runner's environment keeps the default.
     for (const k of ['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL', 'CLAUDE_CODE_USE_BEDROCK']) {
-      assert.equal(cliEnv(acct(dir), { ...base, [k]: 'x' }, none).CLAUDE_CODE_ENTRYPOINT, undefined, k);
+      assert.equal(cliEnv(acct(dir), { ...base, [k]: 'x' }, undefined, none).CLAUDE_CODE_ENTRYPOINT, undefined, k);
     }
     // So does one in the login's settings, or in managed settings.
     const helper = path.join(dir, 'helper');
     fs.mkdirSync(helper);
     fs.writeFileSync(path.join(helper, 'settings.json'), JSON.stringify({ apiKeyHelper: '/bin/key' }));
-    assert.equal(cliEnv(acct(helper), base, none).CLAUDE_CODE_ENTRYPOINT, undefined);
+    assert.equal(cliEnv(acct(helper), base, undefined, none).CLAUDE_CODE_ENTRYPOINT, undefined);
     const proxied = path.join(dir, 'proxied');
     fs.mkdirSync(proxied);
     fs.writeFileSync(path.join(proxied, 'settings.json'), JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'http://localhost:8317' } }));
-    assert.equal(cliEnv(acct(proxied), base, none).CLAUDE_CODE_ENTRYPOINT, undefined);
+    assert.equal(cliEnv(acct(proxied), base, undefined, none).CLAUDE_CODE_ENTRYPOINT, undefined);
     const managed = path.join(dir, 'managed.json');
     fs.writeFileSync(managed, JSON.stringify({ env: { CLAUDE_CODE_USE_VERTEX: '1' } }));
-    assert.equal(cliEnv(acct(dir), base, managed).CLAUDE_CODE_ENTRYPOINT, undefined);
+    assert.equal(cliEnv(acct(dir), base, undefined, managed).CLAUDE_CODE_ENTRYPOINT, undefined);
     // Other settings don't count, and other providers are left alone.
     const plain = path.join(dir, 'plain');
     fs.mkdirSync(plain);
     fs.writeFileSync(path.join(plain, 'settings.json'), JSON.stringify({ model: 'opus', env: { DISABLE_TELEMETRY: '1' } }));
-    assert.equal(cliEnv(acct(plain), base, none).CLAUDE_CODE_ENTRYPOINT, 'threadbear');
-    assert.equal(cliEnv({ id: 'codex-1', provider: 'codex', title: '', configDir: dir }, base, none).CLAUDE_CODE_ENTRYPOINT, undefined);
+    assert.equal(cliEnv(acct(plain), base, undefined, none).CLAUDE_CODE_ENTRYPOINT, 'threadbear');
+    assert.equal(cliEnv({ id: 'codex-1', provider: 'codex', title: '', configDir: dir }, base, undefined, none).CLAUDE_CODE_ENTRYPOINT, undefined);
   } finally {
     setClaudeEntrypoint(null);
   }
