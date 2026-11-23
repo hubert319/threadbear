@@ -883,7 +883,7 @@ test('chrome: the CLI starts with --chrome only on a thread that asked, outside 
 
 test('chrome: a session switched to Auto refuses the Chrome tools until its CLI restarts without them', async () => {
   const s = start([], { chrome: true, permissionMode: 'full' });
-  const hooks = s.state.options.hooks.PreToolUse as { matcher?: string; hooks: ((i: unknown) => Promise<any>)[] }[];
+  const hooks = s.state.options.hooks.PreToolUse as { matcher?: string; hooks: ((i: unknown) => Promise<{ hookSpecificOutput?: { permissionDecision?: string } } | undefined>)[] }[];
   const call = async (tool_name: string) => {
     for (const h of hooks) {
       if (h.matcher && !new RegExp(`^(${h.matcher})$`).test(tool_name)) continue;

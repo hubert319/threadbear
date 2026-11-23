@@ -31,7 +31,7 @@ function setup(callerMode: PermissionMode = 'full') {
   const withCard = async (decision: ApprovalDecision, name: string, args: Record<string, unknown>) => {
     const before = cards().length;
     const p = call(name, args);
-    let card: any;
+    let card: (ReturnType<typeof cards>[number] & { approvalId: string }) | undefined;
     for (let i = 0; i < 50 && !card; i++) {
       await tick();
       card = cards().length > before ? cards().at(-1) : undefined;
