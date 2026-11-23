@@ -1,8 +1,8 @@
 {
   "claude": {
-    "instructions": 3100,
+    "instructions": 3095,
     "tools": 41053,
-    "total": 44153
+    "total": 44148
   },
   "codex": {
     "instructions": 2269,
