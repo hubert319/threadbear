@@ -212,7 +212,7 @@ export type ThreadRecord = {
   confined?: true;
   // Its Claude CLI starts with Claude in Chrome (--chrome), so the agent can
   // drive the user's signed-in Chrome; never passed on Auto
-  // (docs/protocol/settings.md, "Claude in Chrome").
+  // (docs/protocol/panels.md, "Claude in Chrome").
   chrome?: true;
   // "Plan first": the mode approving the plan goes back to, and the plan
   // waiting for Mike (its plan.proposed itemId).

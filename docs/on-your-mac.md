@@ -499,7 +499,7 @@ the owning runner.
   up to 5 seconds between tries while you're looking at that thread. It
   stops retrying when you leave or the request goes away.
 - **A thread you turn Claude in Chrome on for** (`chrome` on the thread,
-  docs/protocol/settings.md "Claude in Chrome", `runner/src/chrome.ts`) starts its
+  docs/protocol/panels.md "Claude in Chrome", `runner/src/chrome.ts`) starts its
   Claude CLI with `--chrome`, which connects to the Claude in Chrome
   extension in your own Chrome and acts there with your sign-ins. Off for
   every thread unless you, or an agent on Full access, turn it on for that

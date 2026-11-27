@@ -227,7 +227,7 @@ export class CallerGate {
         // runner's default (which may be full).
         const mode = (p.permissionMode ?? caller.mode) as PermissionMode;
         if (above({ mode }, caller)) throw needs(`starting a thread with ${MODE_NAMES[mode] ?? mode}`, 'create_thread');
-        // Chrome has the user's logins (docs/protocol/settings.md, "Claude in Chrome").
+        // Chrome has the user's logins (docs/protocol/panels.md, "Claude in Chrome").
         if (p.chrome === true) throw needs('starting a thread with Claude in Chrome', 'create_thread');
         const given = p.startedBy && typeof p.startedBy === 'object' ? (p.startedBy as Params) : {};
         // `unconfine` is only ever the user's: an older runner across a

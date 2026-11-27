@@ -1,4 +1,4 @@
-// Claude in Chrome per thread (docs/protocol/settings.md, "Claude in Chrome"): the
+// Claude in Chrome per thread (docs/protocol/panels.md, "Claude in Chrome"): the
 // thread's Claude CLI starts with --chrome, so its agent can drive the
 // user's own signed-in Chrome. Never in Auto, which is for work on
 // untrusted text.

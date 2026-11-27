@@ -194,7 +194,7 @@ function dropMovedPowers(rec: Record<string, any>): boolean {
     changed = true;
   }
   // Claude in Chrome is the user's signed-in Chrome on this machine: only
-  // turned on here (docs/protocol/settings.md, "Claude in Chrome").
+  // turned on here (docs/protocol/panels.md, "Claude in Chrome").
   if (rec.chrome !== undefined) {
     delete rec.chrome;
     changed = true;

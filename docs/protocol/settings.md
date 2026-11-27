@@ -545,38 +545,6 @@ says `unconfine: false` for an agent's to an older runner across a
 handover (the phone's path too), and the runner reads `unconfine: false`
 from one as `byAgent`.
 
-## Claude in Chrome
-
-Since 13 Nov 2026. The Claude CLI only loads the `mcp__claude-in-chrome__*`
-tools (the Claude in Chrome extension, which drives the user's own Chrome
-with its sign-ins) when it starts with `--chrome`;
-`claudeInChromeDefaultEnabled` in `~/.claude.json` is for interactive
-sessions, so a thread never had them. A thread with `chrome` on its record
-(`threads.create` or `threads.update` with `chrome: true`; the summary has
-`chrome: true`) starts its Claude CLI with that flag (the Agent SDK's
-`extraArgs: { chrome: null }`). Off by default. Codex and ACP threads keep
-the field and ignore it.
-
-Never in Auto: it's for work on untrusted text, and Chrome has the user's
-logins. Turning it on for a thread on Auto, or with Auto in the same call,
-is `-32602` and changes
-nothing; a thread on Chrome switched to Auto keeps the field but its CLI
-refuses the Chrome tools straight away (a PreToolUse hook) and its next CLI
-starts without the flag; back out of Auto, the next one has it again.
-
-It's a CLI flag, so a change applies when the thread's CLI next starts: the
-runner releases an idle CLI at once and a busy one once its turn ends, and
-the next message resumes the session with the flag (or without). A change
-during a turn says so in a `system.note`.
-
-Agents: `create_thread` and `update_thread` take `chrome`. From a thread off
-Full, turning it on asks on a card (the caller gate refuses
-it outright from `tb`); turning it off never asks. Another runner's thread
-can't be given it through Convex (`relay.ts` refuses the field). A thread moved in from another machine arrives without it
-(`dropMovedPowers` in `runner/src/runner/moves.ts`), as that machine's
-Chrome isn't this one's; turn it on again here if it's wanted. The tools
-check that the thread could have it before showing a card.
-
 ## Pools
 
 A pool is a named, ordered list of logins, of any provider. Mike picks a

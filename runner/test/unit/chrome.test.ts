@@ -1,4 +1,4 @@
-// Claude in Chrome per thread (docs/protocol/settings.md, "Claude in Chrome"). The
+// Claude in Chrome per thread (docs/protocol/panels.md, "Claude in Chrome"). The
 // CLI only loads the claude-in-chrome tools when started with --chrome
 // (claudeInChromeDefaultEnabled is for interactive sessions), so a thread
 // asks for it with `chrome` on its record. Never in Auto: it reads
